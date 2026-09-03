@@ -57,13 +57,15 @@ and edits vanish on refresh.
    `supabase/schema.sql`, and **Run**. First, check the `BOOTSTRAP` line —
    it must contain the email *you* will sign in with (that's what makes you
    the DM).
-3. In **Authentication → Sign In / Providers → Email**, turn **off**
+3. Same again with `supabase/seed-campaign.sql` — it loads the
+   *Shadows of Destus* player primer onto the Home page.
+4. In **Authentication → Sign In / Providers → Email**, turn **off**
    "Confirm email". (The invite list is the real gate; skipping confirmation
    emails avoids Supabase's very low free email limits.)
-4. In **Project Settings → API**, copy the **Project URL** and the
+5. In **Project Settings → API**, copy the **Project URL** and the
    **anon public** key into `js/config.js`. Never copy the `service_role`
    key anywhere.
-5. Reload the site → create your account (with the DM email) → you're in.
+6. Reload the site → create your account (with the DM email) → you're in.
 
 ## Step 3 — Put it on the internet (GitHub Pages)
 

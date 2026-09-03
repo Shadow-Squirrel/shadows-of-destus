@@ -11,8 +11,8 @@
 //  (Never put the "service_role" key anywhere in this site.)
 // ─────────────────────────────────────────────────────────────
 export const CONFIG = {
-  CAMPAIGN_NAME: "The Campaign Hub",
-  TAGLINE: "Chronicles of our table",
+  CAMPAIGN_NAME: "Shadows of Destus",
+  TAGLINE: "It starts small. It does not stay that way.",
 
   SUPABASE_URL: "",       // e.g. "https://abcdefgh.supabase.co"
   SUPABASE_ANON_KEY: "",  // long key starting with "eyJ..."
