@@ -8,6 +8,8 @@ character sheets.
 **Total running cost: $0.** GitHub Pages hosts the site; Supabase's free tier
 stores what people type.
 
+**⚔️ Live at: <https://shadow-squirrel.github.io/shadows-of-destus/>**
+
 ---
 
 ## How the three pieces fit
@@ -50,6 +52,10 @@ and edits vanish on refresh.
 
 ## Step 2 — Make it real (free Supabase database)
 
+> ✅ **Already done** for this table (project `shadows-of-destus`, us-west-1;
+> schema applied via `supabase/migrations/`). Kept for reference — future
+> database changes go in a new migration file + `npx supabase db push`.
+
 1. Go to [supabase.com](https://supabase.com) → sign in → **New project**
    (Free plan). Name it anything; save the database password somewhere safe
    (you rarely need it again).
@@ -68,6 +74,9 @@ and edits vanish on refresh.
 6. Reload the site → create your account (with the DM email) → you're in.
 
 ## Step 3 — Put it on the internet (GitHub Pages)
+
+> ✅ **Already done** — pushing to `main` redeploys the live site automatically
+> in about a minute.
 
 1. Create a **public** repo on GitHub (free accounts can only publish Pages
    from public repos) and push this folder to it.
