@@ -14,6 +14,6 @@ export const CONFIG = {
   CAMPAIGN_NAME: "Shadows of Destus",
   TAGLINE: "It starts small. It does not stay that way.",
 
-  SUPABASE_URL: "",       // e.g. "https://abcdefgh.supabase.co"
-  SUPABASE_ANON_KEY: "",  // long key starting with "eyJ..."
+  SUPABASE_URL: "https://wmagwmnqmapasppgfpnj.supabase.co",
+  SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndtYWd3bW5xbWFwYXNwcGdmcG5qIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg0NjIxODYsImV4cCI6MjEwNDAzODE4Nn0.UYA0pCNC8nJc7-gkUJJwo-Vmh8ldeDam0GGiDfnmyo0",
 };
