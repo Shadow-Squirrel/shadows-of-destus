@@ -81,18 +81,19 @@ async function main() {
       <details class="fold">
         <summary>Details & party intel · ${notes.length}</summary>
         ${md(e.description)}
-        ${notes.length ? `<ul class="log">${notes.map((n) => `<li>${esc(n.body)}<span class="when">${esc(ctx.nameOf(n.author_email))} · ${fmtDate(n.created_at)}</span></li>`).join("")}</ul>` : ""}
+        ${notes.length ? `<ul class="log">${notes.map((n) => `<li>${esc(n.body)}<span class="when">${esc(ctx.nameOf(n.author_email))} · ${fmtDate(n.created_at)}</span>${(n.author_email?.toLowerCase() === ctx.me.email || ctx.me.isDM) ? `<button class="x-note" data-id="${n.id}" title="Remove this pinned intel">✕</button>` : ""}</li>`).join("")}</ul>` : ""}
         <form class="row" style="margin-top:10px">
           <input type="text" class="grow" name="body" placeholder="Add intel anyone should know…" required />
           <button class="btn-ghost">Pin it</button>
         </form>
-        ${(mine || ctx.me.isDM) ? `
-        <div class="row" style="margin-top:10px">
+      </details>
+      <div class="row" style="justify-content:space-between; align-items:center; margin-top:10px">
+        <p class="byline" style="margin:0">Recorded by ${esc(ctx.nameOf(e.author_email))} · ${fmtDate(e.created_at)}</p>
+        ${(mine || ctx.me.isDM) ? `<span class="row" style="gap:6px">
           <button class="btn-ghost b-edit">Edit</button>
           <button class="btn-danger b-del">Delete</button>
-        </div>` : ""}
-      </details>
-      <p class="byline">Recorded by ${esc(ctx.nameOf(e.author_email))} · ${fmtDate(e.created_at)}</p>`;
+        </span>` : ""}
+      </div>`;
 
     card.querySelector("details form").onsubmit = (ev) => {
       ev.preventDefault();
@@ -104,8 +105,14 @@ async function main() {
     const del = card.querySelector(".b-del");
     if (del) del.onclick = () => {
       if (!confirm(`Delete "${e.name}" and its intel notes?`)) return;
-      guard(async () => { await codex.remove(e.id); render(); });
+      guard(async () => { await codex.remove(e.id); toast("Struck from the codex"); render(); });
     };
+    card.querySelectorAll(".x-note").forEach((b) => {
+      b.onclick = () => {
+        if (!confirm("Remove this pinned intel?")) return;
+        guard(async () => { await codex.removeNote(b.dataset.id); toast("Intel removed"); render(); });
+      };
+    });
     return card;
   }
 

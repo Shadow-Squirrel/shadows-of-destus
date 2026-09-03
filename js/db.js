@@ -304,6 +304,10 @@ export const codex = {
     if (!sb) return DEMO.codexNotes.push({ id: uid(), entry_id, body, author_email: "dm@example.com", created_at: new Date().toISOString() });
     await q(sb.from("codex_notes").insert({ entry_id, body }));
   },
+  removeNote: async (id) => {
+    if (!sb) return (DEMO.codexNotes = DEMO.codexNotes.filter((n) => n.id !== id));
+    await q(sb.from("codex_notes").delete().eq("id", id));
+  },
 };
 
 /* ═══ Maps ═══ */
