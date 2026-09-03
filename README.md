@@ -37,7 +37,7 @@ js/shell.js                    ← shared header/nav + the login gate
 js/db.js                       ← the "librarian": all reads/writes go through it
 js/pages/*.js                  ← the behavior of each page
 supabase/schema.sql            ← database blueprint: tables + security rules
-maps/                          ← put map images here (jpg/png/webp)
+supabase/migrations/           ← applied database changes, in order
 server.js + run-local.bat      ← local preview only; not used by GitHub Pages
 ```
 
@@ -85,18 +85,21 @@ and edits vanish on refresh.
 3. A minute later the site is live at
    `https://<your-username>.github.io/<repo-name>/`. Send that link to the party.
 
-> Because the repo is public, anything committed to it (including `maps/`) is
-> technically visible to a determined snooper — so **only upload maps the
-> players are allowed to see**. Everything typed into the site (quests, notes,
-> codex) lives in Supabase behind the login, not in the repo.
+> Because the repo is public, anything committed to it is technically visible
+> to a determined snooper — so **no campaign secrets in the repo, ever**.
+> Everything typed into the site (quests, notes, codex) lives in Supabase
+> behind the login, and map images live in a *private* Supabase Storage
+> bucket where players can only fetch maps the DM has revealed.
 
 ## Everyday use
 
 - **Invite a player:** Party page → *Invite players* → add their email + display
   name. They visit the site and *Create account* with that exact email.
   Remove the email later and their access dies instantly.
-- **Add a map:** drop the image into `maps/`, commit + push, then on the Maps
-  page add a card with location `maps/yourfile.jpg`.
+- **Add a map:** upload the image to Supabase → Storage → `maps` bucket (or
+  hand it to Claude), then on the Maps page add a card with that file name.
+  New maps start **hidden**; players see nothing until you press **Reveal** —
+  perfect for mid-session "you arrive at…" moments.
 - **Quests / campaign details:** DM-only buttons appear on those pages when
   you're signed in as DM.
 - **D&D Beyond:** sheets stay there (no official API; embedding is blocked).

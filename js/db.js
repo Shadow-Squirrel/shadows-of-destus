@@ -190,8 +190,8 @@ A sentence each is plenty.
     { id: uid(), entry_id: "c2", body: "Gift idea: tiny cape. Diplomatic value: immense.", author_email: "dm@example.com", created_at: ago(27) },
   ],
   maps: [
-    { id: uid(), title: "Region — The Emberfall Reaches", category: "region", image_url: "", description: "Sample entry. When the DM uploads real maps they appear here, big and zoomable.", created_at: ago(20) },
-    { id: uid(), title: "Deepvein Mine — Gallery 2", category: "battle", image_url: "", description: "Battle map from Session 3.", created_at: ago(2) },
+    { id: uid(), title: "Region — The Emberfall Reaches", category: "region", image_url: "", description: "Sample entry. When the DM uploads real maps they appear here, big and zoomable.", sort_order: 1, revealed: true, created_at: ago(20) },
+    { id: uid(), title: "Deepvein Mine — Gallery 2", category: "battle", image_url: "", description: "Battle map from Session 3.", sort_order: 2, revealed: false, created_at: ago(2) },
   ],
   party: [
     { id: uid(), character_name: "Tav Underbough", player_name: "Sample player", class_text: "Halfling Rogue 4", ddb_url: "https://www.dndbeyond.com/characters", blurb: "Has never met a lock she respected.", created_at: ago(30) },
@@ -312,10 +312,27 @@ export const codex = {
 
 /* ═══ Maps ═══ */
 export const maps = {
-  list: async () => (sb ? q(sb.from("maps").select("*").order("created_at", { ascending: false })) : sortNew(DEMO.maps)),
+  list: async () =>
+    sb
+      ? q(sb.from("maps").select("*").order("sort_order").order("created_at", { ascending: false }))
+      : [...DEMO.maps].sort((a, b) => (a.sort_order ?? 100) - (b.sort_order ?? 100)),
+  // Map images live in a PRIVATE storage bucket. This turns their
+  // storage paths into short-lived viewable URLs — and storage
+  // itself re-checks that this user may see each file.
+  signedUrls: async (paths) => {
+    if (!sb || !paths.length) return {};
+    const rows = await q(sb.storage.from("maps").createSignedUrls(paths, 3600));
+    const out = {};
+    rows.forEach((r) => { if (r.signedUrl) out[r.path] = r.signedUrl; });
+    return out;
+  },
   add: async (row) => {
     if (!sb) return DEMO.maps.push({ ...row, id: uid(), created_at: new Date().toISOString() });
     await q(sb.from("maps").insert(row));
+  },
+  setRevealed: async (id, revealed) => {
+    if (!sb) return Object.assign(DEMO.maps.find((m) => m.id === id), { revealed });
+    await q(sb.from("maps").update({ revealed }).eq("id", id));
   },
   remove: async (id) => {
     if (!sb) return (DEMO.maps = DEMO.maps.filter((m) => m.id !== id));
