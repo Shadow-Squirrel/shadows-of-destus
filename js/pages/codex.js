@@ -2,7 +2,7 @@
 // person, creature, faction, or place they've met, and anyone
 // can pin extra intel notes onto an entry.
 import { boot, esc, md, guard, fmtDate, toast } from "../shell.js";
-import { codex } from "../db.js";
+import { codex, images } from "../db.js";
 
 const KINDS = [
   ["person", "🧝", "People"],
@@ -33,6 +33,7 @@ async function main() {
 
   async function render() {
     const [entries, allNotes] = await Promise.all([codex.list(), codex.notes()]);
+    const urls = await images.urls(entries.map((e) => e.image_path));
     const notesFor = {};
     allNotes.forEach((n) => (notesFor[n.entry_id] ??= []).push(n));
 
@@ -60,7 +61,7 @@ async function main() {
     const grid = root.querySelector("#grid");
     const shown = entries.filter((e) => filter === "all" || e.kind === filter);
     if (!shown.length) grid.innerHTML = `<div class="empty" style="grid-column:1/-1">Nothing recorded here yet. Met anyone interesting lately?</div>`;
-    shown.forEach((e) => grid.appendChild(entryCard(e, notesFor[e.id] || [])));
+    shown.forEach((e) => grid.appendChild(entryCard(e, notesFor[e.id] || [], urls)));
 
     root.querySelector("#new-e").onclick = (ev) => {
       root.querySelector("#new-slot").replaceChildren(entryForm({}));
@@ -68,11 +69,13 @@ async function main() {
     };
   }
 
-  function entryCard(e, notes) {
+  function entryCard(e, notes, urls) {
     const mine = e.author_email?.toLowerCase() === ctx.me.email;
+    const portrait = e.image_path && urls[e.image_path];
     const card = document.createElement("div");
     card.className = "card entry";
     card.innerHTML = `
+      ${portrait ? `<a href="${esc(portrait)}" target="_blank" rel="noopener"><img class="portrait" src="${esc(portrait)}" alt="${esc(e.name)}" loading="lazy" /></a>` : ""}
       <div class="row" style="justify-content:space-between">
         <p class="name">${kindIcon(e.kind)} ${esc(e.name)}</p>
         ${statusPill(e.status)}
@@ -105,7 +108,7 @@ async function main() {
     const del = card.querySelector(".b-del");
     if (del) del.onclick = () => {
       if (!confirm(`Delete "${e.name}" and its intel notes?`)) return;
-      guard(async () => { await codex.remove(e.id); toast("Struck from the codex"); render(); });
+      guard(async () => { await images.remove(e.image_path); await codex.remove(e.id); toast("Struck from the codex"); render(); });
     };
     card.querySelectorAll(".x-note").forEach((b) => {
       b.onclick = () => {
@@ -134,6 +137,9 @@ async function main() {
         <input type="text" name="first_met" value="${esc(e.first_met || "")}" placeholder="Session 3 — the toll bridge" />
         <label class="field">What we know</label>
         <textarea name="description">${esc(e.description || "")}</textarea>
+        <label class="field">📷 Portrait (optional — the face, the beast, the wanted poster)</label>
+        ${e.image_path ? `<p class="muted small" style="margin:2px 0 6px">This entry has a portrait — choosing a new file replaces it.</p>` : ""}
+        <input type="file" name="portrait" accept="image/*" />
         <div class="actions">
           <button class="btn" type="submit">${e.id ? "Save entry" : "Inscribe in the codex"}</button>
           <button class="btn-ghost" type="button" data-cancel>Cancel</button>
@@ -143,10 +149,19 @@ async function main() {
     card.querySelector("form").onsubmit = (ev) => {
       ev.preventDefault();
       const f = new FormData(ev.target);
-      const fields = { name: f.get("name"), kind: f.get("kind"), status: f.get("status"), first_met: f.get("first_met"), description: f.get("description") };
       guard(async () => {
+        const file = f.get("portrait");
+        let image_path = e.image_path || null;
+        if (file && file.size) {
+          toast("Uploading portrait…");
+          const newPath = await images.upload("codex", file);
+          if (newPath) image_path = newPath;
+          else toast("Demo mode can't store images");
+        }
+        const fields = { name: f.get("name"), kind: f.get("kind"), status: f.get("status"), first_met: f.get("first_met"), description: f.get("description"), image_path };
         if (e.id) await codex.update(e.id, fields);
         else await codex.add({ ...fields, author_email: ctx.me.email });
+        if (e.image_path && image_path !== e.image_path) await images.remove(e.image_path);
         toast(e.id ? "Entry updated" : "Inscribed");
         render();
       });

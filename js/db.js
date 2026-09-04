@@ -340,6 +340,46 @@ export const maps = {
   },
 };
 
+/* ═══ Player images (note attachments + codex portraits) ═══
+   Files go to the private "uploads" bucket. Big photos are
+   shrunk in the browser first so the free tier lasts forever. */
+export const images = {
+  prepare: async (file) => {
+    try {
+      const bmp = await createImageBitmap(file);
+      const scale = Math.min(1, 1600 / Math.max(bmp.width, bmp.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.max(1, Math.round(bmp.width * scale));
+      canvas.height = Math.max(1, Math.round(bmp.height * scale));
+      canvas.getContext("2d").drawImage(bmp, 0, 0, canvas.width, canvas.height);
+      const blob = await new Promise((res) => canvas.toBlob(res, "image/jpeg", 0.85));
+      return blob || file;
+    } catch {
+      return file; // format the browser can't redraw — send as-is
+    }
+  },
+  upload: async (kind, file) => {
+    if (!sb) return null; // demo mode can't store images
+    const prepared = await images.prepare(file);
+    const ext = prepared.type === "image/jpeg" ? "jpg" : (file.name.split(".").pop() || "img").toLowerCase();
+    const path = `${kind}/${uid()}.${ext}`;
+    await q(sb.storage.from("uploads").upload(path, prepared, { contentType: prepared.type || file.type }));
+    return path;
+  },
+  urls: async (paths) => {
+    const wanted = paths.filter(Boolean);
+    if (!sb || !wanted.length) return {};
+    const rows = await q(sb.storage.from("uploads").createSignedUrls(wanted, 3600));
+    const out = {};
+    rows.forEach((r) => { if (r.signedUrl) out[r.path] = r.signedUrl; });
+    return out;
+  },
+  remove: async (path) => {
+    if (!sb || !path) return;
+    try { await sb.storage.from("uploads").remove([path]); } catch {}
+  },
+};
+
 /* ═══ Party roster (links to D&D Beyond) ═══ */
 export const party = {
   list: async () => (sb ? q(sb.from("party_characters").select("*").order("created_at")) : [...DEMO.party]),

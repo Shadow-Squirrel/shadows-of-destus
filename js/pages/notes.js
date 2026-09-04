@@ -2,7 +2,7 @@
 // is visible only to its author (enforced by the database's
 // Row Level Security, not just hidden by this page).
 import { boot, esc, md, guard, fmtDate, toast } from "../shell.js";
-import { notes } from "../db.js";
+import { notes, images } from "../db.js";
 
 const ctx = await boot("notes.html", "Notes");
 if (ctx) main();
@@ -22,6 +22,8 @@ async function main() {
           </div>
           <label class="field">Your note — supports **bold**, *italic*, "- " lists</label>
           <textarea name="body" required placeholder="What happened? What did you learn? What must not be forgotten?"></textarea>
+          <label class="field">📷 Attach an image (optional — a sketch, a handout, a suspiciously convenient map)</label>
+          <input type="file" name="image" accept="image/*" />
           <div class="actions">
             <button class="btn" type="submit">Add to the record</button>
             <label class="checkline"><input type="checkbox" name="is_private" /> 🔒 Private — only I can see it</label>
@@ -38,12 +40,20 @@ async function main() {
     e.preventDefault();
     const f = new FormData(e.target);
     guard(async () => {
+      const file = f.get("image");
+      let image_path = null;
+      if (file && file.size) {
+        toast("Uploading image…");
+        image_path = await images.upload("notes", file);
+        if (!image_path) toast("Demo mode can't store images — note saved without it");
+      }
       await notes.add({
         title: f.get("title"),
         body: f.get("body"),
         session_number: f.get("session_number") ? Number(f.get("session_number")) : null,
         is_private: f.get("is_private") === "on",
         author_email: ctx.me.email,
+        image_path,
       });
       e.target.reset();
       toast("Noted for posterity");
@@ -52,10 +62,12 @@ async function main() {
   };
   document.getElementById("search").oninput = () => renderList();
 
+  let urls = {};
   await refresh();
 
   async function refresh() {
     all = await notes.list();
+    urls = await images.urls(all.map((n) => n.image_path));
     renderList();
   }
 
@@ -80,11 +92,12 @@ async function main() {
           ${(mine || ctx.me.isDM) ? `<span style="margin-left:auto"><button class="btn-danger b-del">Delete</button></span>` : ""}
         </div>
         <p class="byline">${esc(ctx.nameOf(n.author_email))} · ${fmtDate(n.created_at)}</p>
-        ${md(n.body)}`;
+        ${md(n.body)}
+        ${n.image_path && urls[n.image_path] ? `<a href="${esc(urls[n.image_path])}" target="_blank" rel="noopener"><img class="note-img" src="${esc(urls[n.image_path])}" alt="attached image" loading="lazy" /></a>` : ""}`;
       const del = card.querySelector(".b-del");
       if (del) del.onclick = () => {
         if (!confirm(`Delete note "${n.title}"?`)) return;
-        guard(async () => { await notes.remove(n.id); refresh(); });
+        guard(async () => { await images.remove(n.image_path); await notes.remove(n.id); refresh(); });
       };
       list.appendChild(card);
     });
