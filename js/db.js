@@ -344,6 +344,10 @@ export const maps = {
     if (!sb || !path) return;
     try { await sb.storage.from("maps").remove([path]); } catch {}
   },
+  update: async (id, fields) => {
+    if (!sb) return Object.assign(DEMO.maps.find((m) => m.id === id), fields);
+    await q(sb.from("maps").update(fields).eq("id", id));
+  },
   setRevealed: async (id, revealed) => {
     if (!sb) return Object.assign(DEMO.maps.find((m) => m.id === id), { revealed });
     await q(sb.from("maps").update({ revealed }).eq("id", id));
