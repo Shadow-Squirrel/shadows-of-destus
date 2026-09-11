@@ -96,10 +96,10 @@ and edits vanish on refresh.
 - **Invite a player:** Party page → *Invite players* → add their email + display
   name. They visit the site and *Create account* with that exact email.
   Remove the email later and their access dies instantly.
-- **Add a map:** upload the image to Supabase → Storage → `maps` bucket (or
-  hand it to Claude), then on the Maps page add a card with that file name.
-  New maps start **hidden**; players see nothing until you press **Reveal** —
-  perfect for mid-session "you arrive at…" moments.
+- **Add a map:** Maps page → **+ Add map** → pick the image straight off your
+  computer (png/jpg/webp, up to 25 MB; DM only). New maps start **hidden**;
+  players see nothing until you press **Reveal** — perfect for mid-session
+  "you arrive at…" moments.
 - **Quests / campaign details:** DM-only buttons appear on those pages when
   you're signed in as DM.
 - **D&D Beyond:** sheets stay there (no official API; embedding is blocked).

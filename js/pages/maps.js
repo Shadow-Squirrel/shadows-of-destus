@@ -78,8 +78,8 @@ async function main() {
           render();
         });
       card.querySelector(".b-del").onclick = () => {
-        if (!confirm(`Remove map "${m.title}" from the atlas? (The image file stays in storage.)`)) return;
-        guard(async () => { await maps.remove(m.id); render(); });
+        if (!confirm(`Remove map "${m.title}" from the atlas? Its image file is deleted too.`)) return;
+        guard(async () => { await maps.removeFile(m.storage_path); await maps.remove(m.id); render(); });
       };
     }
     return card;
@@ -96,9 +96,9 @@ async function main() {
             <select name="category">${CATS.map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select>
           </div>
         </div>
-        <label class="field">Storage file name (an image uploaded to the private "maps" bucket)</label>
-        <input type="text" name="storage_path" placeholder="crownspire.webp" />
-        <label class="field">…or an external image URL (publicly visible — no secrets)</label>
+        <label class="field">🗺️ Map image — pick a file from your computer (png/jpg/webp, up to 25 MB)</label>
+        <input type="file" name="file" accept="image/png,image/jpeg,image/webp,image/gif" />
+        <label class="field">…or paste an image URL instead (publicly visible — no secrets)</label>
         <input type="text" name="image_url" placeholder="https://…" />
         <label class="field">Description</label>
         <input type="text" name="description" placeholder="What is this a map of?" />
@@ -113,10 +113,18 @@ async function main() {
       e.preventDefault();
       const f = new FormData(e.target);
       guard(async () => {
+        const file = f.get("file");
+        let storage_path = null;
+        if (file && file.size) {
+          if (file.size > 25 * 1024 * 1024) { toast("⚠ That image is over 25 MB — shrink it a little and try again"); return; }
+          toast("Uploading map…");
+          storage_path = await maps.upload(file);
+          if (!storage_path) toast("Demo mode can't store images");
+        }
         await maps.add({
           title: f.get("title"),
           category: f.get("category"),
-          storage_path: f.get("storage_path") || null,
+          storage_path,
           image_url: f.get("image_url") || "",
           description: f.get("description"),
           revealed: f.get("revealed") === "on",

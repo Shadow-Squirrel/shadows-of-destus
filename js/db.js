@@ -330,6 +330,20 @@ export const maps = {
     if (!sb) return DEMO.maps.push({ ...row, id: uid(), created_at: new Date().toISOString() });
     await q(sb.from("maps").insert(row));
   },
+  // DM-only: upload a map image at FULL resolution (maps keep
+  // their detail — no shrinking, unlike note photos).
+  upload: async (file) => {
+    if (!sb) return null; // demo mode can't store images
+    const base = file.name.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "map";
+    const ext = (file.name.split(".").pop() || "img").toLowerCase();
+    const path = `${base}-${uid().slice(0, 4)}.${ext}`;
+    await q(sb.storage.from("maps").upload(path, file, { contentType: file.type || "image/jpeg" }));
+    return path;
+  },
+  removeFile: async (path) => {
+    if (!sb || !path) return;
+    try { await sb.storage.from("maps").remove([path]); } catch {}
+  },
   setRevealed: async (id, revealed) => {
     if (!sb) return Object.assign(DEMO.maps.find((m) => m.id === id), { revealed });
     await q(sb.from("maps").update({ revealed }).eq("id", id));
