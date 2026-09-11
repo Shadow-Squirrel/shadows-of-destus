@@ -67,7 +67,8 @@ const NAV = [
   ["maps.html", "🗺️ Maps"],
   ["codex.html", "🐉 Codex"],
   ["notes.html", "🖋️ Notes"],
-  ["party.html", "🎲 Party"],
+  ["dice.html", "🎲 Dice"],
+  ["party.html", "🛡️ Party"],
 ];
 
 function renderHeader(pageFile, who) {

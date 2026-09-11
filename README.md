@@ -102,6 +102,10 @@ and edits vanish on refresh.
   "you arrive at…" moments.
 - **Quests / campaign details:** DM-only buttons appear on those pages when
   you're signed in as DM.
+- **Dice:** the Dice page rolls for the whole table — results are generated
+  by the database itself (no fudging possible) and every open Dice page sees
+  the dice tumble live. Everyone can save favorite rolls ("Fireball — 8d6")
+  as one-click presets.
 - **D&D Beyond:** sheets stay there (no official API; embedding is blocked).
   The Party page links each character straight to their sheet.
 

@@ -197,6 +197,14 @@ A sentence each is plenty.
     { id: uid(), character_name: "Tav Underbough", player_name: "Sample player", class_text: "Halfling Rogue 4", ddb_url: "https://www.dndbeyond.com/characters", blurb: "Has never met a lock she respected.", created_at: ago(30) },
     { id: uid(), character_name: "Brother Casque", player_name: "Sample player", class_text: "Warforged Cleric 4", ddb_url: "https://www.dndbeyond.com/characters", blurb: "A walking reliquary with doubts.", created_at: ago(30) },
   ],
+  rolls: [
+    { id: uid(), roller_email: "tav@example.com", label: "Sneak Attack", dice: [{ sides: 6, count: 3, results: [4, 2, 6] }], modifier: 0, total: 12, created_at: ago(0.01) },
+    { id: uid(), roller_email: "dm@example.com", label: "", dice: [{ sides: 20, count: 1, results: [17] }], modifier: 5, total: 22, created_at: ago(0.02) },
+  ],
+  presets: [
+    { id: uid(), owner_email: "dm@example.com", name: "Fireball", spec: [{ sides: 6, count: 8 }], modifier: 0 },
+    { id: uid(), owner_email: "dm@example.com", name: "Longsword", spec: [{ sides: 20, count: 1 }], modifier: 5 },
+  ],
 };
 
 const sortNew = (arr) => [...arr].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
@@ -395,6 +403,54 @@ export const images = {
   remove: async (path) => {
     if (!sb || !path) return;
     try { await sb.storage.from("uploads").remove([path]); } catch {}
+  },
+};
+
+/* ═══ Dice — rolled by the DATABASE, broadcast to the table ═══ */
+export const dice = {
+  list: async () =>
+    sb
+      ? q(sb.from("rolls").select("*").order("created_at", { ascending: false }).limit(30))
+      : sortNew(DEMO.rolls).slice(0, 30),
+  // Real mode calls the server's roll_dice() so results can't be
+  // forged. Demo mode rolls locally (and forgets on refresh).
+  roll: async (label, spec, modifier) => {
+    if (!sb) {
+      const rolled = spec.map((s) => ({
+        sides: s.sides, count: s.count,
+        results: Array.from({ length: s.count }, () => 1 + Math.floor(Math.random() * s.sides)),
+      }));
+      const total = rolled.reduce((t, d) => t + d.results.reduce((a, b) => a + b, 0), 0) + modifier;
+      const row = { id: uid(), roller_email: "dm@example.com", label, dice: rolled, modifier, total, created_at: new Date().toISOString() };
+      DEMO.rolls.unshift(row);
+      return row;
+    }
+    return q(sb.rpc("roll_dice", { p_label: label, p_spec: spec, p_modifier: modifier }));
+  },
+  // Live feed: cb fires whenever ANYONE at the table rolls.
+  onRoll: (cb, statusCb) => {
+    if (!sb) return () => {};
+    const ch = sb
+      .channel("rolls-feed")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "rolls" }, (p) => cb(p.new))
+      .subscribe((status) => statusCb && statusCb(status));
+    return () => { try { sb.removeChannel(ch); } catch {} };
+  },
+  presets: {
+    list: async () => (sb ? q(sb.from("roll_presets").select("*").order("created_at")) : [...DEMO.presets]),
+    save: async (row) => {
+      if (!sb) {
+        if (row.id) Object.assign(DEMO.presets.find((p) => p.id === row.id), row);
+        else DEMO.presets.push({ ...row, id: uid(), owner_email: "dm@example.com" });
+        return;
+      }
+      if (row.id) await q(sb.from("roll_presets").update({ name: row.name, spec: row.spec, modifier: row.modifier }).eq("id", row.id));
+      else await q(sb.from("roll_presets").insert(row));
+    },
+    remove: async (id) => {
+      if (!sb) return (DEMO.presets = DEMO.presets.filter((p) => p.id !== id));
+      await q(sb.from("roll_presets").delete().eq("id", id));
+    },
   },
 };
 

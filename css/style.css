@@ -217,6 +217,82 @@ input[type="file"]::file-selector-button:hover { color: var(--ink); border-color
   background: repeating-linear-gradient(45deg, transparent 0 14px, rgba(212,165,49,.03) 14px 28px);
 }
 
+/* ── dice ─────────────────────────────────────────────── */
+svg.die { width: 56px; height: 56px; overflow: visible; }
+svg.die polygon {
+  fill: var(--panel-2); stroke: var(--gold-soft); stroke-width: 4;
+  stroke-linejoin: round;
+}
+svg.die text {
+  fill: var(--ink); font-family: var(--font-display); font-weight: 700;
+  font-size: 34px; text-anchor: middle;
+}
+svg.die.mini { width: 44px; height: 44px; }
+svg.die.mini text { font-size: 26px; fill: var(--muted); }
+svg.die.crit polygon { stroke: var(--gold); fill: rgba(212,165,49,.20); filter: drop-shadow(0 0 9px rgba(212,165,49,.75)); }
+svg.die.crit text { fill: #ffe9a8; }
+svg.die.fumble polygon { stroke: var(--ember); fill: rgba(192,91,77,.18); }
+svg.die.fumble text { fill: #e8a196; }
+
+@keyframes die-tumble {
+  0% { transform: rotate(-9deg) scale(.9) translateY(1px); }
+  50% { transform: rotate(10deg) scale(1.08) translateY(-3px); }
+  100% { transform: rotate(-9deg) scale(.9) translateY(1px); }
+}
+svg.die.tumbling { animation: die-tumble .18s ease-in-out infinite; }
+@keyframes die-land { 0% { transform: scale(1.4) rotate(6deg); } 100% { transform: scale(1) rotate(0); } }
+svg.die.landed { animation: die-land .38s cubic-bezier(.2, 2.1, .4, 1); }
+
+.die-btn {
+  background: transparent; border: 1px solid var(--border); border-radius: 10px;
+  padding: 5px 7px 2px; cursor: pointer;
+}
+.die-btn:hover { border-color: var(--gold-soft); background: rgba(212,165,49,.06); }
+.die-btns { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.pool { display: flex; gap: 8px; flex-wrap: wrap; min-height: 38px; align-items: center; }
+.pool-chip {
+  display: inline-flex; align-items: center; gap: 7px;
+  background: rgba(212,165,49,.10); border: 1px solid var(--gold-soft);
+  color: #e8c463; border-radius: 999px; padding: 4px 6px 4px 12px;
+  font-family: var(--font-display); font-weight: 700; font-size: 14px;
+}
+.pool-chip button {
+  background: transparent; border: 1px solid var(--gold-soft); color: #e8c463;
+  border-radius: 999px; width: 22px; height: 22px; cursor: pointer; line-height: 1;
+}
+.pool-chip button:hover { background: rgba(192,91,77,.2); border-color: var(--ember); color: var(--ember); }
+
+.preset-row { border-top: 1px solid var(--border-soft); padding: 9px 0; }
+.roll-row { border-top: 1px solid var(--border-soft); padding: 10px 0; }
+.die-chip {
+  display: inline-block; min-width: 26px; text-align: center;
+  border: 1px solid var(--border); border-radius: 6px; padding: 1px 5px;
+  font-family: var(--font-display); font-weight: 700; font-size: 14px; color: var(--ink);
+  background: var(--panel-2);
+}
+.die-chip.crit { border-color: var(--gold); color: #ffe9a8; box-shadow: 0 0 7px rgba(212,165,49,.5); }
+.die-chip.fumble { border-color: var(--ember); color: #e8a196; }
+.roll-total { font-family: var(--font-display); font-weight: 800; color: var(--gold); font-size: 18px; margin-left: 6px; }
+
+#roll-stage {
+  position: fixed; left: 50%; bottom: 26px; transform: translateX(-50%);
+  z-index: 40; text-align: center;
+  background: rgba(22,17,9,.97); border: 1px solid var(--gold-soft); border-radius: 14px;
+  padding: 14px 22px; box-shadow: 0 12px 44px rgba(0,0,0,.65);
+  max-width: min(92vw, 640px);
+  opacity: 0; pointer-events: none; transition: opacity .25s;
+}
+#roll-stage.show { opacity: 1; }
+#roll-stage .who { font-family: var(--font-display); color: var(--gold); letter-spacing: .06em; font-size: 14.5px; margin-bottom: 10px; }
+#roll-stage .who em { color: var(--ink); }
+#roll-stage .dice-row { display: flex; gap: 9px; flex-wrap: wrap; justify-content: center; }
+#roll-stage .sum {
+  font-family: var(--font-display); font-weight: 800; font-size: 24px; color: var(--gold);
+  margin-top: 10px; opacity: 0; transition: opacity .25s;
+}
+#roll-stage.done .sum { opacity: 1; }
+
 /* banner + toast */
 .banner {
   max-width: 1100px; margin: 18px auto 0; padding: 10px 16px;
