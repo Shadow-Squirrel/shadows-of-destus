@@ -5,36 +5,11 @@
 // only animates them, so nobody can forge a natural 20.
 import { boot, esc, guard, toast } from "../shell.js";
 import { dice } from "../db.js";
+import { dieSvg, specText, flattenDice, createRollStage } from "../roll-fx.js";
 
 const DIE_TYPES = [4, 6, 8, 10, 12, 20, 100];
 const MAX_DICE = 40;
 
-// One flat-ish polygon per die type (viewBox 0 0 100 100).
-const SHAPES = {
-  4: "50,8 95,88 5,88",
-  6: "14,14 86,14 86,86 14,86",
-  8: "50,4 96,50 50,96 4,50",
-  10: "50,4 90,34 76,94 24,94 10,34",
-  12: "50,4 93,37 77,92 23,92 7,37",
-  20: "50,3 91,26 91,74 50,97 9,74 9,26",
-  100: "50,3 83,15 97,50 83,85 50,97 17,85 3,50 17,15",
-};
-
-function dieSvg(sides, value, cls = "") {
-  return `<svg class="die ${cls}" viewBox="0 0 100 100" role="img" aria-label="d${sides}">
-    <polygon points="${SHAPES[sides]}" />
-    <text x="50" y="${sides === 4 ? 66 : 56}">${esc(value)}</text>
-  </svg>`;
-}
-
-function specText(spec, modifier) {
-  let out = spec.map((s) => `${s.count}d${s.sides}`).join(" + ");
-  if (modifier > 0) out += ` + ${modifier}`;
-  if (modifier < 0) out += ` − ${Math.abs(modifier)}`;
-  return out;
-}
-
-const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const fmtTime = (iso) => new Date(iso).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 
 const ctx = await boot("dice.html", "Dice");
@@ -84,9 +59,7 @@ async function main() {
       <div id="feed"></div>
     </div>`;
 
-  const stage = document.createElement("div");
-  stage.id = "roll-stage";
-  document.body.appendChild(stage);
+  const stage = createRollStage(ctx.nameOf);
 
   /* ── die buttons ── */
   const btnWrap = root.querySelector("#die-btns");
@@ -197,11 +170,10 @@ async function main() {
   function rollCard(row) {
     const div = document.createElement("div");
     div.className = "roll-row";
-    const chips = [];
-    (row.dice || []).forEach((d) => d.results.forEach((r) => {
-      const crit = d.sides === 20 && r === 20 ? " crit" : d.sides === 20 && r === 1 ? " fumble" : "";
-      chips.push(`<span class="die-chip${crit}" title="d${d.sides}">${r}</span>`);
-    }));
+    const chips = flattenDice(row).map((d) => {
+      const cls = d.dropped ? " dropped" : d.sides === 20 && d.result === 20 ? " crit" : d.sides === 20 && d.result === 1 ? " fumble" : "";
+      return `<span class="die-chip${cls}" title="d${d.sides}${d.dropped ? " (dropped)" : ""}">${d.result}</span>`;
+    });
     div.innerHTML = `
       <div class="row" style="gap:8px">
         <strong>${esc(ctx.nameOf(row.roller_email))}</strong>
@@ -228,54 +200,11 @@ async function main() {
   if (!initial.length) root.querySelector("#feed").innerHTML = `<p class="muted small" style="font-style:italic">No rolls yet. Fate awaits.</p>`;
   initial.slice().reverse().forEach(addToFeed);
 
-  /* ── the show: tumbling dice overlay ── */
-  const queue = [];
-  let staging = false;
+  /* ── the show: shared overlay (roll-fx.js) ── */
   function showRoll(row) {
     if (seen.has(row.id)) return;
-    queue.push(row);
     addToFeed(row);
-    if (!staging) nextShow();
-  }
-  async function nextShow() {
-    const row = queue.shift();
-    if (!row) { staging = false; return; }
-    staging = true;
-    const flat = [];
-    (row.dice || []).forEach((d) => d.results.forEach((r) => flat.push({ sides: d.sides, result: r })));
-    const shownDice = flat.slice(0, 12);
-    stage.innerHTML = `
-      <div class="who">${esc(ctx.nameOf(row.roller_email))} rolls${row.label ? ` <em>${esc(row.label)}</em>` : ""}…</div>
-      <div class="dice-row">${shownDice.map((d) => dieSvg(d.sides, "?", "tumbling")).join("")}</div>
-      <div class="sum"></div>`;
-    stage.classList.add("show");
-    stage.classList.remove("done");
-    const dieEls = [...stage.querySelectorAll(".die")];
-    const flicker = setInterval(() => {
-      dieEls.forEach((el, i) => {
-        if (el.classList.contains("tumbling"))
-          el.querySelector("text").textContent = 1 + Math.floor(Math.random() * shownDice[i].sides);
-      });
-    }, 75);
-    await sleep(850);
-    dieEls.forEach((el, i) => setTimeout(() => {
-      const d = shownDice[i];
-      el.classList.remove("tumbling");
-      el.querySelector("text").textContent = d.result;
-      if (d.sides === 20 && d.result === 20) el.classList.add("crit");
-      if (d.sides === 20 && d.result === 1) el.classList.add("fumble");
-      el.classList.add("landed");
-    }, i * 90));
-    await sleep(shownDice.length * 90 + 250);
-    clearInterval(flicker);
-    const extra = flat.length - shownDice.length;
-    stage.querySelector(".sum").textContent =
-      `${specText(row.dice || [], row.modifier)}${extra > 0 ? ` (+${extra} more)` : ""}  =  ${row.total}`;
-    stage.classList.add("done");
-    await sleep(2000);
-    stage.classList.remove("show");
-    await sleep(300);
-    nextShow();
+    stage.show(row);
   }
 
   /* ── live updates from the rest of the table ── */

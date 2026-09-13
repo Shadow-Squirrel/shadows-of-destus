@@ -1,0 +1,186 @@
+/* ═══════════════════════════════════════════════════════════
+   Characters — builder wizard + character sheets.
+   Extends style.css; uses the same :root tokens.
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── list cards ── */
+.char-name { font-family: var(--font-display); font-size: 20px; font-weight: 700; color: var(--gold); margin: 0; }
+.char-sub { color: var(--muted); font-size: 14.5px; font-style: italic; }
+.char-mini { display: flex; gap: 14px; margin-top: 10px; flex-wrap: wrap; }
+.char-mini span { font-size: 14px; color: var(--muted); }
+.char-mini strong { color: var(--ink); font-family: var(--font-display); }
+
+/* ── wizard step chips ── */
+.wiz-steps { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 16px; }
+.wiz-steps button {
+  border-radius: 999px; border: 1px solid var(--border); background: transparent;
+  color: var(--muted); font-family: var(--font-display); font-weight: 600;
+  font-size: 12.5px; letter-spacing: .05em; padding: 5px 13px; cursor: pointer;
+}
+.wiz-steps button:hover { color: var(--ink); border-color: var(--gold-soft); }
+.wiz-steps button.active { color: var(--gold); border-color: var(--gold-soft); background: rgba(212,165,49,.10); }
+.wiz-steps button.done::before { content: "✓ "; color: var(--moss); }
+.wiz-steps button.needs::after { content: " •"; color: var(--ember); }
+
+/* ── option cards (pick a race / class / subclass) ── */
+.opt-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+.opt-card {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 12px 14px; cursor: pointer; text-align: left;
+  font-family: var(--font-body); color: var(--ink);
+}
+.opt-card:hover { border-color: var(--gold-soft); }
+.opt-card.selected { border-color: var(--gold); background: rgba(212,165,49,.10); box-shadow: 0 0 0 1px var(--gold-soft) inset; }
+.opt-card .opt-title { font-family: var(--font-display); font-weight: 700; font-size: 15.5px; color: var(--ink); }
+.opt-card.selected .opt-title { color: var(--gold); }
+.opt-card .opt-sub { color: var(--muted); font-size: 13px; margin-top: 2px; }
+
+/* choice chips (skills, languages…) */
+.choice-row { display: flex; gap: 7px; flex-wrap: wrap; margin: 8px 0; }
+.choice-chip {
+  border-radius: 999px; border: 1px solid var(--border); background: transparent;
+  color: var(--muted); font-size: 13.5px; padding: 4px 12px; cursor: pointer;
+  font-family: var(--font-body);
+}
+.choice-chip:hover { border-color: var(--gold-soft); color: var(--ink); }
+.choice-chip.on { color: #e8c463; border-color: var(--gold-soft); background: rgba(212,165,49,.12); }
+.choice-chip.exp { color: #c0b6e8; border-color: #4d4472; background: rgba(155,142,201,.14); }
+.choice-chip:disabled { opacity: .4; cursor: not-allowed; }
+
+/* ── ability score grid ── */
+.ability-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+.ability-box {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 10px 12px; text-align: center;
+}
+.ability-box .ab-name { font-family: var(--font-display); font-size: 12px; letter-spacing: .1em; color: var(--muted); }
+.ability-box .ab-mod { font-family: var(--font-display); font-size: 24px; font-weight: 800; color: var(--gold); }
+.ability-box .ab-score { font-size: 14px; color: var(--muted); }
+.ability-box input { text-align: center; margin-top: 6px; }
+.ability-box .ab-steps { display: flex; justify-content: center; gap: 6px; margin-top: 6px; }
+.ability-box .ab-steps button {
+  width: 26px; height: 26px; border-radius: 6px; border: 1px solid var(--border);
+  background: transparent; color: var(--ink); cursor: pointer; font-weight: 700;
+}
+.ability-box .ab-steps button:hover { border-color: var(--gold-soft); }
+.ability-box .ab-race { font-size: 12px; color: var(--moss); }
+
+/* ── the sheet ── */
+.sheet-head { display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap; margin-bottom: 4px; }
+.sheet-head h2 { font-family: var(--font-display); color: var(--gold); margin: 0; font-size: 26px; letter-spacing: .04em; }
+
+.stat-row { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); margin: 14px 0; }
+.stat-tile {
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: var(--radius);
+  padding: 9px 8px 8px; text-align: center;
+}
+.stat-tile .stat-label { font-family: var(--font-display); font-size: 11px; letter-spacing: .09em; color: var(--muted); text-transform: uppercase; }
+.stat-tile .stat-big { font-family: var(--font-display); font-size: 22px; font-weight: 800; color: var(--ink); margin-top: 2px; }
+.stat-tile .stat-sub { font-size: 12px; color: var(--faint); }
+
+/* anything rollable glows on hover */
+button.roll, .roll button { cursor: pointer; }
+.rollable {
+  background: transparent; border: 1px solid transparent; border-radius: 8px;
+  color: inherit; font: inherit; cursor: pointer; padding: 2px 8px;
+}
+.rollable:hover { border-color: var(--gold-soft); background: rgba(212,165,49,.08); }
+.rollable .r-mod { font-family: var(--font-display); font-weight: 700; color: var(--gold); }
+
+/* skills & saves tables */
+.skill-list { columns: 2; column-gap: 26px; }
+@media (max-width: 760px) { .skill-list { columns: 1; } }
+.skill-row {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  break-inside: avoid; padding: 3px 6px; border-radius: 7px;
+  background: transparent; border: 1px solid transparent; color: var(--ink); font: inherit; cursor: pointer;
+  text-align: left;
+}
+.skill-row:hover { border-color: var(--gold-soft); background: rgba(212,165,49,.07); }
+.skill-row .prof-dot {
+  width: 9px; height: 9px; border-radius: 50%; border: 1px solid var(--faint); flex: none;
+}
+.skill-row .prof-dot.on { background: var(--gold); border-color: var(--gold); }
+.skill-row .prof-dot.exp { background: var(--mystic); border-color: var(--mystic); box-shadow: 0 0 5px var(--mystic); }
+.skill-row .sk-mod { font-family: var(--font-display); font-weight: 700; color: var(--gold); width: 34px; text-align: right; }
+.skill-row .sk-ab { color: var(--faint); font-size: 12px; width: 30px; text-transform: uppercase; }
+
+/* HP bar + trackers */
+.hp-wrap { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.hp-bar { flex: 1 1 160px; height: 14px; border-radius: 999px; border: 1px solid var(--border); background: rgba(0,0,0,.35); overflow: hidden; }
+.hp-fill { height: 100%; background: linear-gradient(90deg, #6f9a52, #8fbf6a); transition: width .3s; }
+.hp-fill.hurt { background: linear-gradient(90deg, #b08a2e, #d4a531); }
+.hp-fill.dying { background: linear-gradient(90deg, #a34435, #c05b4d); }
+.hp-num input { width: 64px; text-align: center; }
+
+/* spell slot pips */
+.slot-pips { display: inline-flex; gap: 5px; align-items: center; }
+.pip {
+  width: 16px; height: 16px; border-radius: 50%; cursor: pointer;
+  border: 1.5px solid var(--gold-soft); background: rgba(212,165,49,.18); padding: 0;
+}
+.pip.used { background: transparent; border-color: var(--faint); }
+.pip:hover { box-shadow: 0 0 5px rgba(212,165,49,.6); }
+
+/* sheet tabs */
+.sheet-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 18px 0 14px; }
+.sheet-tabs button { border-radius: 999px; }
+
+/* spells */
+.spell-lvl-head {
+  font-family: var(--font-display); font-size: 13px; letter-spacing: .09em; color: var(--muted);
+  border-bottom: 2px solid var(--border); padding-bottom: 4px; margin: 16px 0 6px;
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.spell-row { border-top: 1px solid var(--border-soft); padding: 7px 0; }
+.spell-row .sp-name { font-weight: 700; }
+.spell-row .sp-meta { color: var(--faint); font-size: 12.5px; }
+.spell-row .sp-tags { display: inline-flex; gap: 5px; margin-left: 6px; }
+.conc-dot, .rit-dot {
+  display: inline-block; font-size: 10.5px; padding: 0 6px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--muted); vertical-align: 1px;
+}
+.conc-dot { color: #c0b6e8; border-color: #4d4472; }
+
+/* advantage toggle */
+.adv-toggle { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; overflow: hidden; }
+.adv-toggle button {
+  border: none; background: transparent; color: var(--muted); cursor: pointer;
+  font-family: var(--font-display); font-weight: 700; font-size: 12px; letter-spacing: .05em; padding: 5px 12px;
+}
+.adv-toggle button.on.adv { background: rgba(127,168,96,.2); color: #a7cf8b; }
+.adv-toggle button.on.norm { background: rgba(212,165,49,.15); color: #e8c463; }
+.adv-toggle button.on.dis { background: rgba(192,91,77,.2); color: #e39387; }
+
+/* features */
+.feature-block { border-top: 1px solid var(--border-soft); padding: 9px 0; }
+.feature-block .f-name { font-weight: 700; }
+.feature-block .f-src { color: var(--faint); font-size: 12.5px; margin-left: 6px; }
+
+/* dropped (advantage) dice */
+.die-chip.dropped { opacity: .38; text-decoration: line-through; }
+svg.die.dropped { opacity: .35; }
+
+/* modal */
+.modal-back {
+  position: fixed; inset: 0; background: rgba(8,6,3,.72); z-index: 60;
+  display: flex; align-items: center; justify-content: center; padding: 18px;
+}
+.modal {
+  background: var(--panel); border: 1px solid var(--gold-soft); border-radius: 14px;
+  max-width: 640px; width: 100%; max-height: 86vh; overflow: auto; padding: 20px 22px;
+  box-shadow: 0 18px 60px rgba(0,0,0,.7);
+}
+.modal h3 { font-family: var(--font-display); color: var(--gold); margin: 0 0 10px; letter-spacing: .05em; }
+
+/* two-column sheet layout */
+.sheet-cols { display: grid; gap: 16px; grid-template-columns: 340px 1fr; align-items: start; }
+@media (max-width: 900px) { .sheet-cols { grid-template-columns: 1fr; } }
+.sheet-cols .card + .card { margin-top: 16px; }
+
+/* builder footer nav */
+.wiz-nav { display: flex; gap: 10px; margin-top: 18px; align-items: center; flex-wrap: wrap; }
+.wiz-nav .spacer { flex: 1; }
+.pending-note { color: var(--ember); font-size: 13.5px; }
+.srd-note { color: var(--faint); font-size: 12.5px; margin-top: 14px; }
+.srd-note a { color: var(--muted); }

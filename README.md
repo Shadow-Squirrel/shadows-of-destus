@@ -2,8 +2,10 @@
 
 A private website for one D&D table: campaign details, a quest board the DM
 updates, the party's shared notes, a codex of everyone (and everything) met
-along the way, an atlas of maps, and a roster linking out to D&D Beyond
-character sheets.
+along the way, an atlas of maps, live shared dice — and a full **character
+builder & sheet** (D&D Beyond-style): every SRD race, class and spell, with
+click-to-roll checks, saves, attacks and spell slots wired straight into the
+table's shared dice feed.
 
 **Total running cost: $0.** GitHub Pages hosts the site; Supabase's free tier
 stores what people type.
@@ -32,14 +34,41 @@ it opens the front door only as far as those rules allow.
 ```
 index.html, quests.html, ...   ← one thin file per page
 css/style.css                  ← the whole look; colors are tokens at the top
+css/characters.css             ← builder + character-sheet styles
 js/config.js                   ← ★ the only file you edit by hand (name + keys)
 js/shell.js                    ← shared header/nav + the login gate
 js/db.js                       ← the "librarian": all reads/writes go through it
+js/roll-fx.js                  ← the dice show (shared by Dice page + sheets)
 js/pages/*.js                  ← the behavior of each page
+js/dnd/                        ← the 5e rules engine + SRD game data
+js/dnd/data/*.js               ← GENERATED from the SRD (see tools/build-srd.mjs)
 supabase/schema.sql            ← database blueprint: tables + security rules
 supabase/migrations/           ← applied database changes, in order
+tools/                         ← dev scripts: SRD data build, rules tests
 server.js + run-local.bat      ← local preview only; not used by GitHub Pages
 ```
+
+## The character builder
+
+The **Characters** page builds real 5e characters: pick race → class →
+abilities → background → equipment → spells, then play from a live sheet —
+tap any skill, save or attack and the roll (with the right bonuses, advantage
+and all) goes through the table's shared dice feed. Leveling up walks you
+through exactly what changed.
+
+- **Game content:** the [SRD 5.1](https://media.wizards.com/2023/downloads/dnd/SRD_CC_v5.1.pdf)
+  (CC-BY-4.0) — all 12 classes, 9 races, 319 spells. Content from other books
+  isn't freely licensed, so it can't ship here; instead every picker has a
+  **Custom** option (homebrew race, subclass, background, spells, items,
+  features) so players can type in anything from books they own, with links to
+  [D&D Beyond](https://www.dndbeyond.com/sources) / [Open5e](https://open5e.com)
+  for looking things up.
+- **Database:** characters need the `…_characters.sql` migration (below).
+  Until it's applied, sheets park safely in the browser's localStorage and
+  move to the database automatically afterwards.
+- **Refreshing SRD data:** `git clone --depth 1 https://github.com/5e-bits/5e-database /tmp/5edb`
+  then `SRD_DIR=/tmp/5edb/src/2014/en node tools/build-srd.mjs`, and sanity-check
+  with `node tools/test-rules.mjs`.
 
 ---
 
@@ -102,12 +131,17 @@ and edits vanish on refresh.
   "you arrive at…" moments.
 - **Quests / campaign details:** DM-only buttons appear on those pages when
   you're signed in as DM.
+- **Build a character:** Characters page → *Forge a character*. Sheets are
+  visible to the whole party; only the owner (and the DM) can edit or roll
+  from one. *Level up* on the sheet shows what you gained and which choices
+  are still owed.
 - **Dice:** the Dice page rolls for the whole table — results are generated
   by the database itself (no fudging possible) and every open Dice page sees
   the dice tumble live. Everyone can save favorite rolls ("Fireball — 8d6")
-  as one-click presets.
-- **D&D Beyond:** sheets stay there (no official API; embedding is blocked).
-  The Party page links each character straight to their sheet.
+  as one-click presets. Advantage/disadvantage rolls both d20s server-side
+  and keeps the right one.
+- **D&D Beyond:** prefer to keep a sheet there? The Party page still links
+  out to external sheets.
 
 ## Free-tier fine print
 

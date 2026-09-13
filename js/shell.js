@@ -67,6 +67,7 @@ const NAV = [
   ["maps.html", "🗺️ Maps"],
   ["codex.html", "🐉 Codex"],
   ["notes.html", "🖋️ Notes"],
+  ["characters.html", "🧙 Characters"],
   ["dice.html", "🎲 Dice"],
   ["party.html", "🛡️ Party"],
 ];

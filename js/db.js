@@ -201,6 +201,30 @@ A sentence each is plenty.
     { id: uid(), roller_email: "tav@example.com", label: "Sneak Attack", dice: [{ sides: 6, count: 3, results: [4, 2, 6] }], modifier: 0, total: 12, created_at: ago(0.01) },
     { id: uid(), roller_email: "dm@example.com", label: "", dice: [{ sides: 20, count: 1, results: [17] }], modifier: 5, total: 22, created_at: ago(0.02) },
   ],
+  characters: [
+    {
+      id: "ch-demo-1", owner_email: "tav@example.com", created_at: ago(12), updated_at: ago(1),
+      name: "Tav Underbough",
+      sheet: {
+        v: 1, name: "Tav Underbough", level: 4, alignment: "chaotic good", abilityMethod: "standard",
+        race: { kind: "srd", index: "halfling", subrace: "lightfoot-halfling" },
+        clazz: { kind: "srd", index: "rogue", subclass: "thief", skillChoices: ["stealth", "acrobatics", "perception", "deception"], expertise: ["stealth", "sleight-of-hand"] },
+        background: { kind: "custom", name: "Urchin", skills: ["sleight-of-hand", "insight"], tools: ["Thieves' tools", "Disguise kit"], languages: [], feature: { name: "City Secrets", desc: "You know a city's back alleys and rooftops; you and companions travel through it twice as fast." } },
+        abilities: { str: 8, dex: 15, con: 13, int: 12, wis: 13, cha: 14 },
+        asi: [{ level: 4, kind: "asi", plus: { dex: 2 } }],
+        hp: { method: "average", rolled: [], manual: null, current: null, temp: 0 },
+        equipment: [
+          { kind: "weapon", item: "rapier", qty: 1, equipped: true },
+          { kind: "weapon", item: "dagger", qty: 2, equipped: true },
+          { kind: "weapon", item: "shortbow", qty: 1, equipped: true },
+          { kind: "armor", item: "leather-armor", qty: 1, equipped: true },
+          { kind: "pack", item: "burglars-pack", qty: 1 },
+          { kind: "gear", item: "thieves-tools", qty: 1 },
+        ],
+        details: { personality: "Has never met a lock she respected.", ideals: "", bonds: "", flaws: "", backstory: "", appearance: "" },
+      },
+    },
+  ],
   presets: [
     { id: uid(), owner_email: "dm@example.com", name: "Fireball", spec: [{ sides: 6, count: 8 }], modifier: 0 },
     { id: uid(), owner_email: "dm@example.com", name: "Longsword", spec: [{ sides: 20, count: 1 }], modifier: 5 },
@@ -427,6 +451,29 @@ export const dice = {
     }
     return q(sb.rpc("roll_dice", { p_label: label, p_spec: spec, p_modifier: modifier }));
   },
+  // A d20 check with normal / advantage / disadvantage. The
+  // database rolls both dice and keeps the right one (roll_check).
+  // Falls back to a local (unshared) roll if the migration that
+  // adds roll_check hasn't been applied yet — flagged local:true.
+  rollCheck: async (label, modifier, mode = "normal") => {
+    const local = () => {
+      const n = mode === "normal" ? 1 : 2;
+      const results = Array.from({ length: n }, () => 1 + Math.floor(Math.random() * 20));
+      const kept = n === 1 ? results[0] : mode === "adv" ? Math.max(...results) : Math.min(...results);
+      return {
+        id: uid(), roller_email: "dm@example.com", label,
+        dice: [{ sides: 20, count: n, results, ...(n === 2 ? { keep: mode === "adv" ? "high" : "low" } : {}) }],
+        modifier, total: kept + modifier, created_at: new Date().toISOString(),
+      };
+    };
+    if (!sb) { const row = local(); DEMO.rolls.unshift(row); return row; }
+    try {
+      return await q(sb.rpc("roll_check", { p_label: label, p_modifier: modifier, p_mode: mode }));
+    } catch (e) {
+      if (/roll_check|schema cache|does not exist|Could not find/i.test(e.message || "")) return { ...local(), local: true };
+      throw e;
+    }
+  },
   // Live feed: cb fires whenever ANYONE at the table rolls.
   onRoll: (cb, statusCb) => {
     if (!sb) return () => {};
@@ -451,6 +498,77 @@ export const dice = {
       if (!sb) return (DEMO.presets = DEMO.presets.filter((p) => p.id !== id));
       await q(sb.from("roll_presets").delete().eq("id", id));
     },
+  },
+};
+
+/* ═══ Characters — full sheets built on this site ═══
+   Three modes:
+     demo  — sample data, like everything else.
+     real  — the characters table (members read all, write own).
+     local — Supabase is connected but the characters migration
+             hasn't been applied yet: sheets park in THIS browser
+             (localStorage) so nothing is lost, and move to the
+             database the moment the migration lands. */
+const CHAR_LS_KEY = "sod-characters";
+let charMode = null; // resolved on first list(): "db" | "local"
+const lsChars = () => { try { return JSON.parse(localStorage.getItem(CHAR_LS_KEY) || "[]"); } catch { return []; } };
+const lsPutChars = (rows) => { try { localStorage.setItem(CHAR_LS_KEY, JSON.stringify(rows)); } catch {} };
+const missingTable = (e) => /does not exist|relation|schema cache|Could not find/i.test(e.message || "");
+
+export const characters = {
+  mode: () => (!sb ? "demo" : charMode === "local" ? "local" : "real"),
+  list: async () => {
+    if (!sb) return [...DEMO.characters];
+    if (charMode !== "local") {
+      try {
+        const rows = await q(sb.from("characters").select("*").order("updated_at", { ascending: false }));
+        charMode = "db";
+        return rows;
+      } catch (e) {
+        if (!missingTable(e)) throw e;
+        charMode = "local";
+      }
+    }
+    return lsChars().sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
+  },
+  // row: {id?, name, sheet}; ownerEmail is used in demo/local modes
+  // (in real mode the DATABASE stamps the owner via my_email()).
+  save: async (row, ownerEmail) => {
+    const stamp = new Date().toISOString();
+    if (!sb) {
+      const ex = row.id && DEMO.characters.find((x) => x.id === row.id);
+      if (ex) { Object.assign(ex, { name: row.name, sheet: row.sheet, updated_at: stamp }); return ex; }
+      const fresh = { id: uid(), owner_email: ownerEmail || "dm@example.com", name: row.name, sheet: row.sheet, created_at: stamp, updated_at: stamp };
+      DEMO.characters.unshift(fresh);
+      return fresh;
+    }
+    if (charMode === "local") {
+      const all = lsChars();
+      const ex = row.id && all.find((x) => x.id === row.id);
+      if (ex) { Object.assign(ex, { name: row.name, sheet: row.sheet, updated_at: stamp }); lsPutChars(all); return ex; }
+      const fresh = { id: uid(), owner_email: ownerEmail, name: row.name, sheet: row.sheet, created_at: stamp, updated_at: stamp, local: true };
+      all.unshift(fresh);
+      lsPutChars(all);
+      return fresh;
+    }
+    if (row.id)
+      return q(sb.from("characters").update({ name: row.name, sheet: row.sheet }).eq("id", row.id).select().single());
+    return q(sb.from("characters").insert({ name: row.name, sheet: row.sheet }).select().single());
+  },
+  remove: async (id) => {
+    if (!sb) return (DEMO.characters = DEMO.characters.filter((x) => x.id !== id));
+    if (charMode === "local") return lsPutChars(lsChars().filter((x) => x.id !== id));
+    await q(sb.from("characters").delete().eq("id", id));
+  },
+  // once the migration is applied, move any parked local sheets in
+  migrateLocal: async () => {
+    if (!sb || charMode === "local") return 0;
+    const parked = lsChars();
+    if (!parked.length) return 0;
+    for (const row of parked)
+      await q(sb.from("characters").insert({ name: row.name, sheet: row.sheet }).select().single());
+    lsPutChars([]);
+    return parked.length;
   },
 };
 
