@@ -143,8 +143,9 @@ export function createFx(canvas, view) {
       glowCircle(c.x, c.y, R * ease.out(t) * (s.scale ?? 1), eff.palette, (1 - t) * 0.9);
       if (t < 0.15 && !s._spawned) {
         s._spawned = true;
+        const rf = s.radiusFt ?? 10;
         spawnParticles(s.particles ?? 50, s.at === "from" ? eff.from : eff.to, {
-          speed: [s.radiusFt * 1.2, s.radiusFt * 3], life: [350, 900],
+          speed: [rf * 1.2, rf * 3], life: [350, 900],
           size: [2, 6], palette: eff.palette, drag: 0.88, gravity: s.embers ? 14 : 0,
         });
       }
@@ -274,7 +275,7 @@ export function createFx(canvas, view) {
       if (t < 0.6 && Math.random() < 0.7)
         spawnParticles(3, s.at === "from" ? eff.from : eff.to, {
           speed: [1, 6], life: [500, 1100], size: [2, 4.5],
-          palette: eff.palette, drag: 0.96, rise: -F(6) / 1000, twinkle: true,
+          palette: eff.palette, drag: 0.96, rise: -7, twinkle: true, // ft/s upward drift
         });
     },
     orbit(s, t, eff) {
@@ -345,8 +346,8 @@ export function createFx(canvas, view) {
       const age = now - p.born;
       if (age > p.life) return false;
       const dt = 16 / 1000;
-      p.grid.x += (p.vx * dt) / 5;   // ft/s → cells/s (5 ft per cell)
-      p.grid.y += (p.vy * dt) / 5 + p.rise * 16;
+      p.grid.x += (p.vx * dt) / 5;                        // ft/s → cells (5 ft per cell)
+      p.grid.y += (p.vy * dt) / 5 + ((p.rise || 0) * dt) / 5; // rise is ft/s too
       p.vx *= p.drag; p.vy = p.vy * p.drag + (p.gravity || 0) * dt;
       const q = P(p.grid);
       const lifeT = age / p.life;

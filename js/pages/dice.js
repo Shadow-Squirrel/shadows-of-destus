@@ -6,6 +6,7 @@
 import { boot, esc, guard, toast } from "../shell.js";
 import { dice } from "../db.js";
 import { dieSvg, specText, flattenDice, createRollStage } from "../roll-fx.js";
+import { dice3dEnabled, setDice3dEnabled } from "../dice3d.js";
 
 const DIE_TYPES = [4, 6, 8, 10, 12, 20, 100];
 const MAX_DICE = 40;
@@ -27,6 +28,9 @@ async function main() {
   root.innerHTML = `
     <div class="row" style="justify-content:space-between; margin-bottom:14px">
       <h2 class="section" style="margin:0">Roll the Bones</h2>
+      <label class="checkline" title="Physics dice tumble across the screen — they always land on the database's real results">
+        <input type="checkbox" id="d3-toggle" ${dice3dEnabled() ? "checked" : ""} /> 3D dice
+      </label>
     </div>
     <div class="card">
       <div class="die-btns" id="die-btns"></div>
@@ -60,6 +64,10 @@ async function main() {
     </div>`;
 
   const stage = createRollStage(ctx.nameOf);
+  root.querySelector("#d3-toggle").onchange = (e) => {
+    setDice3dEnabled(e.target.checked);
+    toast(e.target.checked ? "3D dice on — next roll tumbles in 3D" : "3D dice off — classic tumble");
+  };
 
   /* ── die buttons ── */
   const btnWrap = root.querySelector("#die-btns");

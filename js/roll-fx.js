@@ -6,6 +6,7 @@
 //  looks identical wherever it was made.
 // ─────────────────────────────────────────────────────────────
 import { esc } from "./shell.js";
+import { roll3d, dice3dAvailable } from "./dice3d.js";
 
 // One flat-ish polygon per die type (viewBox 0 0 100 100).
 const SHAPES = {
@@ -64,6 +65,25 @@ export function createRollStage(nameOf) {
     const row = queue.shift();
     if (!row) { staging = false; return; }
     staging = true;
+
+    // Physics dice first: real 3D dice tumble across the screen and
+    // land on the database's exact results. Any hiccup → classic 2D.
+    if (dice3dAvailable()) {
+      let did3d = false;
+      try { did3d = await roll3d(row); } catch {}
+      if (did3d) {
+        stage.innerHTML = `
+          <div class="who">${esc(nameOf(row.roller_email))} rolls${row.label ? ` <em>${esc(row.label)}</em>` : ""}</div>
+          <div class="sum">${specText(row.dice || [], row.modifier)}  =  ${row.total}</div>`;
+        stage.classList.add("show", "done");
+        await sleep(2100);
+        stage.classList.remove("show", "done");
+        await sleep(300);
+        nextShow();
+        return;
+      }
+    }
+
     const flat = flattenDice(row);
     const shownDice = flat.slice(0, 12);
     stage.innerHTML = `
