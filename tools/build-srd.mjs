@@ -493,4 +493,64 @@ emit("feats.js", {
   ),
 });
 
+/* ═══ monsters.js + monster-details.js (SRD bestiary, ~334) ═══ */
+const monstersRaw = load("Monsters");
+const MONSTERS = {};
+const MONSTER_DETAILS = {};
+const crText = (cr) => (cr === 0.125 ? "1/8" : cr === 0.25 ? "1/4" : cr === 0.5 ? "1/2" : String(cr));
+for (const m of monstersRaw.sort(sortByName)) {
+  const ac0 = Array.isArray(m.armor_class) ? m.armor_class[0] : null;
+  const saves = [], skills = [];
+  for (const p of m.proficiencies || []) {
+    const idx = p.proficiency?.index || "";
+    if (idx.startsWith("saving-throw-")) saves.push(`${idx.slice(13).toUpperCase()} +${p.value}`);
+    else if (idx.startsWith("skill-")) skills.push(`${p.proficiency.name.replace("Skill: ", "")} +${p.value}`);
+  }
+  const speed = Object.entries(m.speed || {})
+    .map(([k, v]) => (k === "walk" ? String(v) : `${k} ${v}`)).join(", ");
+  const senses = Object.entries(m.senses || {})
+    .map(([k, v]) => `${k.replace(/_/g, " ")} ${v}`).join(", ");
+  MONSTERS[m.index] = {
+    index: m.index,
+    name: m.name,
+    size: m.size,
+    type: m.type + (m.subtype ? ` (${m.subtype})` : ""),
+    alignment: m.alignment,
+    ac: ac0 ? ac0.value : 10,
+    acType: ac0?.type || "",
+    hp: m.hit_points,
+    hpRoll: m.hit_points_roll || m.hit_dice || "",
+    speed,
+    abilities: { str: m.strength, dex: m.dexterity, con: m.constitution, int: m.intelligence, wis: m.wisdom, cha: m.charisma },
+    saves,
+    skills,
+    vuln: m.damage_vulnerabilities || [],
+    resist: m.damage_resistances || [],
+    immune: m.damage_immunities || [],
+    condImmune: (m.condition_immunities || []).map((c) => c.name),
+    senses,
+    languages: m.languages || "",
+    cr: m.challenge_rating,
+    crText: crText(m.challenge_rating),
+    pb: m.proficiency_bonus || 2,
+    xp: m.xp,
+    legendary: !!(m.legendary_actions || []).length,
+  };
+  const act = (a) => ({
+    name: a.name,
+    desc: (a.desc || "").trim(),
+    attackBonus: a.attack_bonus ?? null,
+    damage: (a.damage || []).filter((d) => d.damage_dice).map((d) => ({ dice: d.damage_dice, type: d.damage_type?.index || "" })),
+  });
+  MONSTER_DETAILS[m.index] = {
+    traits: (m.special_abilities || []).map(act),
+    actions: (m.actions || []).map(act),
+    reactions: (m.reactions || []).map(act),
+    legendary: (m.legendary_actions || []).map(act),
+    desc: m.desc || "",
+  };
+}
+emit("monsters.js", { MONSTERS });
+emit("monster-details.js", { MONSTER_DETAILS });
+
 console.log("Done.");

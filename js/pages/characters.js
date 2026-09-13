@@ -88,7 +88,10 @@ async function main() {
     root.innerHTML = `
       <div class="row" style="justify-content:space-between; margin-bottom:14px">
         <h2 class="section" style="margin:0">Heroes of the Table</h2>
-        <a class="btn" style="text-decoration:none" href="#new">⚒ Forge a character</a>
+        <span class="row" style="gap:8px">
+          <button class="btn-ghost" id="import-btn">📥 Import</button>
+          <a class="btn" style="text-decoration:none" href="#new">⚒ Forge a character</a>
+        </span>
       </div>
       ${mode === "local" ? `
         <div class="banner" style="margin:0 0 14px; max-width:none">
@@ -136,8 +139,18 @@ async function main() {
         <div class="actions">
           <a class="btn" style="text-decoration:none" href="#c/${esc(row.id)}">Open sheet</a>
           ${mine || ctx.me.isDM ? `<a class="btn-ghost" style="text-decoration:none" href="#edit/${esc(row.id)}">Edit</a>` : ""}
+          <button class="btn-ghost b-export" title="Download as JSON">⭳</button>
           ${mine || ctx.me.isDM ? `<button class="btn-danger b-del">✕</button>` : ""}
         </div>`;
+      card.querySelector(".b-export").onclick = () => guard(async () => {
+        const { exportCharacter } = await import("../dnd/import.js");
+        const blob = new Blob([exportCharacter(row)], { type: "application/json" });
+        const a = document.createElement("a");
+        a.href = URL.createObjectURL(blob);
+        a.download = `${(row.name || "character").replace(/[^\w-]+/g, "_")}.json`;
+        a.click();
+        URL.revokeObjectURL(a.href);
+      });
       const del = card.querySelector(".b-del");
       if (del) del.onclick = () => {
         if (!confirm(`Remove ${row.name} forever? There is no resurrection spell for this.`)) return;
@@ -146,4 +159,57 @@ async function main() {
       grid.appendChild(card);
     });
   }
+
+  /* ── import (native JSON or D&D Beyond JSON) ── */
+  function openImport() {
+    guard(async () => {
+      const { openModal } = await import("./characters/common.js");
+      const m = openModal("Import a character", `
+        <p class="muted small">Two ways in:</p>
+        <p class="muted small"><strong>From this site:</strong> upload/paste a JSON exported with the ⭳ button.</p>
+        <p class="muted small"><strong>From D&D Beyond:</strong> set the character to <em>Public</em>, open
+          <code>character-service.dndbeyond.com/character/v5/character/&lt;its number&gt;</code>
+          in a browser tab, copy everything, paste it here. Name, race, class, level, scores,
+          spells and gear come across; the builder's checklist flags anything left to re-pick.</p>
+        <input type="file" id="imp-file" accept=".json,application/json" />
+        <label class="field">…or paste the JSON</label>
+        <textarea id="imp-text" style="min-height:140px" placeholder='{"name": …}'></textarea>
+        <div class="actions">
+          <button class="btn" id="imp-go">Import</button>
+          <button class="btn-ghost" id="imp-cancel">Cancel</button>
+          <span class="muted small" id="imp-msg"></span>
+        </div>`);
+      const $ = (s) => m.el.querySelector(s);
+      $("#imp-cancel").onclick = m.close;
+      $("#imp-file").onchange = async (e) => {
+        const f = e.target.files[0];
+        if (f) $("#imp-text").value = await f.text();
+      };
+      $("#imp-go").onclick = () => guard(async () => {
+        const text = $("#imp-text").value.trim();
+        if (!text) { $("#imp-msg").textContent = "Nothing to import yet."; return; }
+        const { parseImport } = await import("../dnd/import.js");
+        const { char, warnings } = parseImport(text);
+        const row = await store.save({ name: char.name || "Imported hero", sheet: char }, ctx.me.email);
+        m.close();
+        if (warnings.length) {
+          const { openModal: om } = await import("./characters/common.js");
+          const w = om("Imported — a few things to finish", `
+            <ul>${warnings.map((x) => `<li class="small">${esc(x)}</li>`).join("")}</ul>
+            <div class="actions">
+              <button class="btn" id="w-edit">Open in the builder</button>
+              <button class="btn-ghost" id="w-sheet">Straight to the sheet</button>
+            </div>`);
+          w.el.querySelector("#w-edit").onclick = () => { w.close(); location.hash = "#edit/" + row.id; };
+          w.el.querySelector("#w-sheet").onclick = () => { w.close(); location.hash = "#c/" + row.id; };
+        } else {
+          toast(`${char.name || "Hero"} imported`);
+          location.hash = "#c/" + row.id;
+        }
+      });
+    });
+  }
+  root.addEventListener("click", (e) => {
+    if (e.target?.id === "import-btn") openImport();
+  });
 }

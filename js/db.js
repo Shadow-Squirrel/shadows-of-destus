@@ -229,6 +229,14 @@ A sentence each is plenty.
     { id: uid(), owner_email: "dm@example.com", name: "Fireball", spec: [{ sides: 6, count: 8 }], modifier: 0 },
     { id: uid(), owner_email: "dm@example.com", name: "Longsword", spec: [{ sides: 20, count: 1 }], modifier: 5 },
   ],
+  encounters: [
+    { id: "enc1", name: "Ambush on the Mine Road", map_id: null, grid: { cell: 70, feet: 5, show: true }, active: true, created_at: ago(1) },
+  ],
+  tokens: [
+    { id: "tk1", encounter_id: "enc1", kind: "pc", character_id: "ch-demo-1", monster_index: "", label: "Tav", x: 3, y: 5, size: 1, color: "#7fa860", hp_current: null, hp_max: null, conditions: [], hidden: false, initiative: 14, created_at: ago(1) },
+    { id: "tk2", encounter_id: "enc1", kind: "monster", character_id: null, monster_index: "goblin", label: "Goblin A", x: 8, y: 4, size: 1, color: "#c05b4d", hp_current: 7, hp_max: 7, conditions: ["prone"], hidden: false, initiative: 12, created_at: ago(1) },
+    { id: "tk3", encounter_id: "enc1", kind: "monster", character_id: null, monster_index: "wolf", label: "Wolf", x: 9, y: 6, size: 1, color: "#8fa3b0", hp_current: 11, hp_max: 11, conditions: [], hidden: true, initiative: 8, created_at: ago(1) },
+  ],
 };
 
 const sortNew = (arr) => [...arr].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
@@ -569,6 +577,92 @@ export const characters = {
       await q(sb.from("characters").insert({ name: row.name, sheet: row.sheet }).select().single());
     lsPutChars([]);
     return parked.length;
+  },
+};
+
+/* ═══ VTT — the live battle map ═══
+   encounters (which map, grid, which one is live) + tokens
+   (who stands where, HP, conditions). Everything syncs over
+   Supabase Realtime; spell effects ride a broadcast channel
+   and are never stored. Demo mode plays solo in memory. */
+export const vtt = {
+  encounters: {
+    list: async () =>
+      sb ? q(sb.from("encounters").select("*").order("created_at", { ascending: false })) : [...DEMO.encounters],
+    save: async (row) => {
+      if (!sb) {
+        const ex = row.id && DEMO.encounters.find((e) => e.id === row.id);
+        if (ex) { Object.assign(ex, row); return ex; }
+        const fresh = { grid: { cell: 70, feet: 5, show: true }, active: false, ...row, id: uid(), created_at: new Date().toISOString() };
+        DEMO.encounters.unshift(fresh);
+        return fresh;
+      }
+      if (row.id) {
+        const { id, ...fields } = row;
+        return q(sb.from("encounters").update(fields).eq("id", id).select().single());
+      }
+      return q(sb.from("encounters").insert(row).select().single());
+    },
+    remove: async (id) => {
+      if (!sb) {
+        DEMO.encounters = DEMO.encounters.filter((e) => e.id !== id);
+        DEMO.tokens = DEMO.tokens.filter((t) => t.encounter_id !== id);
+        return;
+      }
+      await q(sb.from("encounters").delete().eq("id", id));
+    },
+    // exactly one battle is "live" for the whole table
+    setActive: async (id) => {
+      if (!sb) return DEMO.encounters.forEach((e) => (e.active = e.id === id));
+      await q(sb.from("encounters").update({ active: false }).eq("active", true));
+      if (id) await q(sb.from("encounters").update({ active: true }).eq("id", id));
+    },
+  },
+  tokens: {
+    list: async (encounterId) =>
+      sb
+        ? q(sb.from("tokens").select("*").eq("encounter_id", encounterId).order("created_at"))
+        : DEMO.tokens.filter((t) => t.encounter_id === encounterId),
+    add: async (row) => {
+      if (!sb) {
+        const fresh = { x: 2, y: 2, size: 1, color: "", conditions: [], hidden: false, monster_index: "", character_id: null, hp_current: null, hp_max: null, initiative: null, ...row, id: uid(), created_at: new Date().toISOString() };
+        DEMO.tokens.push(fresh);
+        return fresh;
+      }
+      return q(sb.from("tokens").insert(row).select().single());
+    },
+    update: async (id, fields) => {
+      if (!sb) return Object.assign(DEMO.tokens.find((t) => t.id === id) || {}, fields);
+      await q(sb.from("tokens").update(fields).eq("id", id));
+    },
+    remove: async (id) => {
+      if (!sb) return (DEMO.tokens = DEMO.tokens.filter((t) => t.id !== id));
+      await q(sb.from("tokens").delete().eq("id", id));
+    },
+    // fires on ANY token/encounter change; the page decides relevance
+    onChange: (cb, statusCb) => {
+      if (!sb) return () => {};
+      const ch = sb
+        .channel("vtt-sync")
+        .on("postgres_changes", { event: "*", schema: "public", table: "tokens" }, (p) => cb({ table: "tokens", type: p.eventType, new: p.new, old: p.old }))
+        .on("postgres_changes", { event: "*", schema: "public", table: "encounters" }, (p) => cb({ table: "encounters", type: p.eventType, new: p.new, old: p.old }))
+        .subscribe((status) => statusCb && statusCb(status));
+      return () => { try { sb.removeChannel(ch); } catch {} };
+    },
+  },
+  // ephemeral spell/effect animations, broadcast to every open map
+  fx: {
+    join: (onFx) => {
+      if (!sb) return { send: (p) => { try { onFx(p); } catch {} }, leave: () => {} };
+      const ch = sb
+        .channel("vtt-fx", { config: { broadcast: { self: true } } })
+        .on("broadcast", { event: "fx" }, (msg) => { try { onFx(msg.payload); } catch {} })
+        .subscribe();
+      return {
+        send: (p) => { try { ch.send({ type: "broadcast", event: "fx", payload: p }); } catch {} },
+        leave: () => { try { sb.removeChannel(ch); } catch {} },
+      };
+    },
   },
 };
 
