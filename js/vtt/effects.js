@@ -404,23 +404,37 @@ export function createFx(canvas, view) {
   };
 
   function jaggedPath(a, b, jag, forks) {
-    // returns array of point arrays (main + branches), px space
+    // A real lightning channel (px space): the main bolt zigzags PERPENDICULAR to
+    // its travel direction, anchored exactly at both ends by a sine envelope, so it
+    // reads as one jagged strike — not random scatter. Branches lean FORWARD off the
+    // channel (never backward) and taper, like real forked lightning.
+    const dx = b.x - a.x, dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const nx = -dy / len, ny = dx / len;          // unit perpendicular to travel
+    const baseAng = Math.atan2(dy, dx);           // travel direction
+    const seg = Math.max(5, Math.min(18, Math.round(len / 52)));
     const pts = [a];
-    const seg = 8;
     for (let i = 1; i < seg; i++) {
       const t = i / seg;
-      pts.push({
-        x: a.x + (b.x - a.x) * t + rand(-jag, jag),
-        y: a.y + (b.y - a.y) * t + rand(-jag, jag),
-      });
+      const env = Math.sin(t * Math.PI);          // 0 at ends → 1 mid: endpoints stay exact
+      // uneven forward spacing + an irregular perpendicular jag — sharp and natural,
+      // not a regular zigzag/sine wave
+      const tt = t + rand(-0.45, 0.45) / seg;
+      const off = rand(-jag, jag) * env;
+      pts.push({ x: a.x + dx * tt + nx * off, y: a.y + dy * tt + ny * off });
     }
     pts.push(b);
     const paths = [pts];
     for (let f = 0; f < forks; f++) {
-      const start = pts[2 + Math.floor(rand(0, seg - 3))];
-      const ang = rand(0, TAU);
-      const len = rand(jag * 1.5, jag * 3.5);
-      paths.push([start, { x: start.x + Math.cos(ang) * len, y: start.y + Math.sin(ang) * len }]);
+      const idx = 1 + Math.floor(rand(1, seg - 2));
+      const start = pts[idx];
+      const side = (f % 2 === 0) ? 1 : -1;                    // alternate sides
+      const ang = baseAng + side * rand(0.30, 0.75);         // lean forward off the channel
+      const flen = rand(jag * 1.4, jag * 3.0) * (1 - (idx / seg) * 0.5); // shorter further along
+      const end = { x: start.x + Math.cos(ang) * flen, y: start.y + Math.sin(ang) * flen };
+      const mid = { x: (start.x + end.x) / 2 + nx * rand(-jag, jag) * 0.3,
+                    y: (start.y + end.y) / 2 + ny * rand(-jag, jag) * 0.3 };
+      paths.push([start, mid, end]);
     }
     return paths;
   }
@@ -682,7 +696,7 @@ export function createFx(canvas, view) {
       const flash = t < 0.12 ? 1 : Math.max(0, 1 - (t - 0.12) / 0.88);
       if (flash <= 0) return;
       // steady bolts hold their shape (readable); live bolts re-roll for crackle
-      if (!s._paths || Math.random() < (s.steady ? 0.14 : 0.5)) s._paths = jaggedPath(a, b, F(s.jagFt ?? 5), s.forks ?? 4);
+      if (!s._paths || Math.random() < (s.steady ? 0.14 : 0.5)) s._paths = jaggedPath(a, b, F(s.jagFt ?? 5), s.forks ?? 3);
       ctx.save();
       ctx.lineCap = "round"; ctx.lineJoin = "round";
       ctx.shadowColor = eff.palette.glow; ctx.shadowBlur = 24 * cs;
@@ -1480,8 +1494,8 @@ export function createFx(canvas, view) {
 
     /* ── lightning / thunder ── */
     "lightning-bolt": () => [
-      A({ type: "bolt", dur: 850, steady: true, jagFt: 5, forks: 4 }), // a persistent forked bolt, not a tube
-      A({ type: "bolt", delay: 40, dur: 760 }),                        // a live flicker layered on
+      A({ type: "bolt", dur: 850, steady: true, jagFt: 4, forks: 2 }), // one clean forked strike, held steady
+      A({ type: "bolt", delay: 40, dur: 640, jagFt: 5, forks: 1 }),    // a live flicker layered on for crackle
       A({ type: "vfire", style: "spark", delay: 120, dur: 720, radiusFt: 7, spanSec: 1.0 }), // electric impact flash
       A({ type: "burst", delay: 150, dur: 500, radiusFt: 6, particles: 34 }),
     ],

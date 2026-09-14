@@ -15,7 +15,7 @@ import { longRest, shortRest, spendHitDie, currentHp, hitDiceLeft } from "../dnd
 import { MONSTERS } from "../dnd/data/monsters.js";
 import { CONDITIONS } from "../dnd/data/core.js";
 import { SPELLS } from "../dnd/data/spells.js";
-import { openModal, advToggle, spellMetaLine, ordinal } from "./characters/common.js";
+import { openModal, advToggle, spellMetaLine, spellText, ordinal, cap } from "./characters/common.js";
 
 const PC_COLORS = ["#7fa860", "#5e8fa8", "#a8895e", "#9b8ec9", "#c0895b", "#8fb0a3"];
 const SIZE_OF = { Tiny: 1, Small: 1, Medium: 1, Large: 2, Huge: 3, Gargantuan: 4 };
@@ -893,10 +893,11 @@ async function main() {
       const noSlots = leveled && sc && !opts.length;
       row.innerHTML = `
         <span style="flex:1; min-width:0">
-          <strong>${esc(sp.name)}</strong>
+          <strong class="c-name" title="View spell details" style="cursor:pointer; text-decoration:underline; text-decoration-style:dotted; text-underline-offset:3px">${esc(sp.name)}</strong>
           <span class="pill ${sp.level ? "mystic" : "steel"}" style="margin-left:4px">${sp.level ? ordinal(sp.level) : "Cantrip"}</span><br>
           <span class="muted" style="font-size:12px">${esc(spellMetaLine(sp))}</span>
         </span>
+        <button class="btn-ghost c-info" title="View spell details" style="padding:3px 9px; font-size:15px; line-height:1">ⓘ</button>
         ${opts.length ? `
           <select class="c-slot" style="width:auto; padding:4px 6px; font-size:13px">
             ${opts.map((o, i) => `<option value="${i}">${o.pact ? `pact ${ordinal(o.lv)}` : ordinal(o.lv)} (${o.left} left)</option>`).join("")}
@@ -907,6 +908,9 @@ async function main() {
         const slot = selEl ? opts[+selEl.value] : null;
         armTargeting({ kind: "cast", crow, sp, custom, slot }, `tap the target point for ${sp.name}`);
       };
+      const showDetails = () => openSpellDetails(sp);
+      row.querySelector(".c-info").onclick = showDetails;
+      row.querySelector(".c-name").onclick = showDetails;
       listEl.appendChild(row);
     });
     if (noSlotNote(sc, sheet, out)) {
@@ -919,6 +923,49 @@ async function main() {
   }
   const noSlotNote = (sc, sheet, rows) =>
     !!sc && rows.some(({ sp }) => (sp.level || 0) > 0 && !slotOptions(sc, sheet, sp.level).length);
+
+  /* Spell details popup — casting time, range, save/attack, damage, area, and
+     the full SRD rules text (loaded lazily). Works for SRD and custom spells. */
+  async function openSpellDetails(sp) {
+    const stat = (label, val) =>
+      val ? `<div><div class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:.05em">${esc(label)}</div>
+             <div style="font-size:13px">${esc(String(val))}</div></div>` : "";
+    const saveLine = sp.dc
+      ? `${String(sp.dc.ability || "").toUpperCase()} save${sp.dc.success ? ` · ${sp.dc.success} on save` : ""}`
+      : (sp.attack ? `${cap(sp.attack)} spell attack` : "");
+    let dmg = "";
+    if (sp.damage) {
+      const d = sp.damage;
+      const base = d.atSlot ? (d.atSlot[sp.level] || Object.values(d.atSlot)[0])
+                 : d.atChar ? Object.values(d.atChar)[0] : (d.dice || "");
+      dmg = [base, d.type].filter(Boolean).join(" ");
+    } else if (sp.heal) dmg = "Healing";
+    const body = `
+      <div class="small muted" style="margin:-6px 0 12px">${esc(spellMetaLine(sp))}${sp.concentration ? " · Concentration" : ""}${sp.ritual ? " · Ritual" : ""}</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px 16px; margin-bottom:14px">
+        ${stat("Casting Time", sp.time)}
+        ${stat("Range", sp.range)}
+        ${stat("Components", sp.components)}
+        ${stat("Duration", sp.duration)}
+        ${stat("Attack / Save", saveLine)}
+        ${stat("Damage / Effect", dmg)}
+        ${sp.aoe ? stat("Area", `${sp.aoe.size} ft ${sp.aoe.type}`) : ""}
+        ${sp.classes && sp.classes.length ? stat("Classes", sp.classes.map(cap).join(", ")) : ""}
+      </div>
+      <div id="sp-desc" class="small" style="font-style:italic; opacity:.7">Loading description…</div>`;
+    const { el } = openModal(sp.name || "Spell", body);
+    let txt = null;
+    try { const t = sp.index ? await spellText(sp.index) : null; txt = t && (t.desc || t); } catch { /* fine */ }
+    if (!txt) txt = sp.desc || sp.text || "";
+    const descEl = el.querySelector("#sp-desc");
+    if (descEl) {
+      descEl.style.fontStyle = "normal";
+      descEl.style.opacity = "1";
+      descEl.innerHTML = txt
+        ? String(txt).split(/\n\n+/).map((p) => `<p style="margin:0 0 8px; line-height:1.5">${esc(p)}</p>`).join("")
+        : `<span class="muted" style="font-style:italic">No rules text on file for this spell.</span>`;
+    }
+  }
 
   /* ── Dice tab (compact tray; the feed lives on the Dice page) ── */
   function renderDiceTab(body) {
