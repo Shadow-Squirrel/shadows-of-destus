@@ -269,8 +269,8 @@ A sentence each is plenty.
   // two demo campaigns so the switcher is real; existing demo content
   // above belongs to "demo-a" (see inCampaign()).
   campaigns: [
-    { id: "demo-a", name: "Shadows of Destus", owner_email: "dm@example.com", created_at: ago(40) },
-    { id: "demo-b", name: "A Second Table", owner_email: "dm@example.com", created_at: ago(3) },
+    { id: "demo-a", name: "Shadows of Destus", tagline: "It starts small. It does not stay that way.", owner_email: "dm@example.com", created_at: ago(40) },
+    { id: "demo-b", name: "A Second Table", tagline: "A colder, quieter war.", owner_email: "dm@example.com", created_at: ago(3) },
   ],
   campaignMembers: [
     { id: uid(), campaign_id: "demo-a", email: "dm@example.com", role: "dm", display_name: "The DM" },
@@ -310,7 +310,7 @@ export const campaigns = {
     if (!sb) return [...DEMO.campaigns];
     try {
       const rows = await q(
-        sb.from("campaign_members").select("campaign_id, role, campaigns(id, name, owner_email, created_at)").ilike("email", email)
+        sb.from("campaign_members").select("campaign_id, role, campaigns(*)").ilike("email", email)
       );
       return rows
         .map((r) => r.campaigns && { ...r.campaigns, myRole: r.role })
@@ -324,7 +324,7 @@ export const campaigns = {
   },
   create: async (name) => {
     if (!sb) {
-      const c = { id: uid(), name: name || "New Campaign", owner_email: "dm@example.com", created_at: new Date().toISOString(), myRole: "dm" };
+      const c = { id: uid(), name: name || "New Campaign", tagline: "", owner_email: "dm@example.com", created_at: new Date().toISOString(), myRole: "dm" };
       DEMO.campaigns.push(c);
       DEMO.campaignMembers.push({ id: uid(), campaign_id: c.id, email: "dm@example.com", role: "dm", display_name: "The DM" });
       return c;
@@ -334,6 +334,12 @@ export const campaigns = {
   rename: async (id, name) => {
     if (!sb) { const c = DEMO.campaigns.find((x) => x.id === id); if (c) c.name = name; return; }
     await q(sb.from("campaigns").update({ name }).eq("id", id));
+  },
+  // The campaign's own tagline (shown under the app name). Requires the
+  // `tagline` column — see supabase/apply-new-features.sql.
+  setTagline: async (id, tagline) => {
+    if (!sb) { const c = DEMO.campaigns.find((x) => x.id === id); if (c) c.tagline = tagline; return; }
+    await q(sb.from("campaigns").update({ tagline }).eq("id", id));
   },
   remove: async (id) => {
     if (!sb) { DEMO.campaigns = DEMO.campaigns.filter((c) => c.id !== id); return; }

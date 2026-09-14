@@ -78,12 +78,12 @@ const NAV = [
   ["party.html", "🛡️ Party"],
 ];
 
-function renderHeader(pageFile, who, title) {
+function renderHeader(pageFile, who, tagline) {
   const header = document.getElementById("site-header");
   header.innerHTML = `
     <div class="masthead">
-      <h1>${esc(title || CONFIG.CAMPAIGN_NAME)}</h1>
-      <span class="tagline">${esc(CONFIG.TAGLINE)}</span>
+      <h1>${esc(CONFIG.APP_NAME)}</h1>
+      ${tagline ? `<span class="tagline">${esc(tagline)}</span>` : ""}
       <span class="who" id="who-slot"></span>
     </div>
     <nav class="site">
@@ -137,7 +137,7 @@ function banner(html, isErr = false) {
 function renderGate(main) {
   main.innerHTML = `
     <div class="card gate">
-      <h2>${esc(CONFIG.CAMPAIGN_NAME)}</h2>
+      <h2>${esc(CONFIG.APP_NAME)}</h2>
       <p class="muted small">Members only. Sign in, or create your account with the same
       email your DM invited. No invite yet? Pester your DM.</p>
       <div class="tabs">
@@ -210,7 +210,7 @@ function signOutBtn() {
 
 /* ── boot: call this first on every page ── */
 export async function boot(pageFile, pageTitle) {
-  document.title = `${pageTitle} · ${CONFIG.CAMPAIGN_NAME}`;
+  document.title = `${pageTitle} · ${CONFIG.APP_NAME}`;
   const main = document.getElementById("main");
   const mode = await initDb();
 
@@ -220,7 +220,7 @@ export async function boot(pageFile, pageTitle) {
     const currentId = chooseCampaign(list);
     setCampaign(currentId);
     const current = list.find((c) => c.id === currentId);
-    renderHeader(pageFile, [pill("demo mode", "mystic"), campaignSwitcher(list, currentId)], current?.name);
+    renderHeader(pageFile, [pill("demo mode", "mystic"), campaignSwitcher(list, currentId)], current?.tagline);
     banner(`🧪 <strong>Demo mode</strong> — sample data, and edits vanish on refresh.
       You're previewing as the DM so every control is visible.
       Connect your free database to make it real (README, step 2).`);
@@ -247,7 +247,7 @@ export async function boot(pageFile, pageTitle) {
       document.createTextNode(meL.display_name || session.email),
       pill(meL.role === "dm" ? "DM" : "player", meL.role === "dm" ? "gold" : "steel"),
       signOutBtn(),
-    ], CONFIG.CAMPAIGN_NAME);
+    ], CONFIG.TAGLINE);
     const allL = await members.list();
     const ctxL = {
       mode, legacy: true,
@@ -277,7 +277,7 @@ export async function boot(pageFile, pageTitle) {
     document.createTextNode(me.display_name || session.email),
     pill(me.role === "dm" ? "DM" : "player", me.role === "dm" ? "gold" : "steel"),
     signOutBtn(),
-  ], current?.name);
+  ], current?.tagline);
 
   const all = await members.list();
   const ctx = {

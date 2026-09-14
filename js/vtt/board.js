@@ -215,12 +215,21 @@ export function createBoard(wrap, hooks = {}) {
     }
 
     if (grid.show) {
-      bctx.strokeStyle = "rgba(212,165,49,.13)";
-      bctx.lineWidth = 1 / scale;                // ≈ 1 css px at any zoom
-      bctx.beginPath();
-      for (let x = 0; x <= ws.w + 0.01; x += CELL) { bctx.moveTo(x, 0); bctx.lineTo(x, ws.h); }
-      for (let y = 0; y <= ws.h + 0.01; y += CELL) { bctx.moveTo(0, y); bctx.lineTo(ws.w, y); }
-      bctx.stroke();
+      const onMap = !!(mapImg && mapImg.naturalWidth > 0);
+      const strokeGrid = () => {
+        bctx.beginPath();
+        for (let x = 0; x <= ws.w + 0.01; x += CELL) { bctx.moveTo(x, 0); bctx.lineTo(x, ws.h); }
+        for (let y = 0; y <= ws.h + 0.01; y += CELL) { bctx.moveTo(0, y); bctx.lineTo(ws.w, y); }
+        bctx.stroke();
+      };
+      if (onMap) {
+        // over a map, a faint gold line washes out — lay a dark halo under a
+        // brighter gold line so the grid reads clearly on any artwork
+        bctx.strokeStyle = "rgba(8,6,3,.40)"; bctx.lineWidth = 3 / scale; strokeGrid();
+        bctx.strokeStyle = "rgba(222,190,110,.55)"; bctx.lineWidth = 1 / scale; strokeGrid();
+      } else {
+        bctx.strokeStyle = "rgba(212,165,49,.16)"; bctx.lineWidth = 1 / scale; strokeGrid();
+      }
     }
   }
 

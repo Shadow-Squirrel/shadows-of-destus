@@ -51,11 +51,12 @@ async function main() {
           <h3 class="char-name" style="margin:0">${esc(c.name)}</h3>
           ${isCurrent ? `<span class="pill gold">viewing now</span>` : ""}
         </div>
+        ${c.tagline ? `<p class="muted small" style="margin:2px 0 0; font-style:italic">“${esc(c.tagline)}”</p>` : ""}
         <p class="muted small" style="margin:4px 0 0">${isDM ? "You're the DM" : "You're a player"}${c.created_at ? ` · started ${esc(fmtDate(c.created_at))}` : ""}</p>
         <div class="actions">
           ${isCurrent ? `<button class="btn-ghost" disabled>Current</button>` : `<button class="btn b-switch">Switch to this</button>`}
           ${isDM ? `<button class="btn-ghost b-manage">Manage players</button>` : ""}
-          ${isOwner ? `<button class="btn-ghost b-rename">Rename</button><button class="btn-danger b-del">✕</button>` : ""}
+          ${isOwner ? `<button class="btn-ghost b-rename">Rename</button><button class="btn-ghost b-tagline">Tagline</button><button class="btn-danger b-del">✕</button>` : ""}
         </div>
         <div class="manage-here"></div>`;
       const sw = card.querySelector(".b-switch");
@@ -66,6 +67,14 @@ async function main() {
       if (rn) rn.onclick = () => guard(async () => {
         const name = prompt("Rename campaign", c.name);
         if (name && name.trim()) { await campaigns.rename(c.id, name.trim()); toast("Renamed"); render(); }
+      });
+      const tg = card.querySelector(".b-tagline");
+      if (tg) tg.onclick = () => guard(async () => {
+        const t = prompt(`Tagline for “${c.name}” — shown under the app name in the header (blank to clear)`, c.tagline || "");
+        if (t === null) return;
+        await campaigns.setTagline(c.id, t.trim());
+        toast("Tagline saved");
+        render();
       });
       const dl = card.querySelector(".b-del");
       if (dl) dl.onclick = () => guard(async () => {

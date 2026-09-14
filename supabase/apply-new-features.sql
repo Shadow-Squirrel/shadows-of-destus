@@ -243,10 +243,13 @@ do $$ begin alter publication supabase_realtime add table tokens; exception when
 create table if not exists campaigns (
   id uuid primary key default gen_random_uuid(),
   name text not null default 'New Campaign',
+  tagline text,
   owner_email text not null default my_email(),
   created_at timestamptz not null default now()
 );
 alter table campaigns enable row level security;
+-- a DM-customizable tagline shown under the app name (added to existing installs)
+alter table campaigns add column if not exists tagline text;
 
 create table if not exists campaign_members (
   id uuid primary key default gen_random_uuid(),
