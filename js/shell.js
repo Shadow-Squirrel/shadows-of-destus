@@ -92,6 +92,25 @@ function renderHeader(pageFile, who, tagline) {
   document.getElementById("who-slot").replaceChildren(...who);
 }
 
+// One consistent legal footer on every page (replaces the per-page markup).
+function renderFooter() {
+  const foot = document.querySelector("footer.site");
+  if (!foot) return;
+  const year = new Date().getFullYear();
+  foot.innerHTML = `
+    <nav class="foot-links">
+      <a href="./terms.html">Terms of Service</a>
+      <a href="./privacy.html">Privacy Policy</a>
+      <a href="./licenses.html">Licenses &amp; Attribution</a>
+    </nav>
+    <p class="foot-legal">© ${year} ${esc(CONFIG.APP_NAME)}. All rights reserved.</p>
+    <p class="foot-legal">${esc(CONFIG.APP_NAME)} is an independent virtual tabletop and is not affiliated with,
+      endorsed, or sponsored by Wizards of the Coast, Dungeons &amp; Dragons, or D&amp;D Beyond.</p>
+    <p class="foot-legal">Game rules content is from the System Reference Document 5.1, © Wizards of the Coast LLC,
+      licensed under <a href="https://creativecommons.org/licenses/by/4.0/" target="_blank" rel="noopener">CC&nbsp;BY&nbsp;4.0</a>.</p>
+    <p class="foot-flavor">Forged with dice · data guarded by Supabase</p>`;
+}
+
 // A dropdown of the user's campaigns + a link to manage them. Switching
 // remembers the choice and reloads so every page re-reads in the new scope.
 function campaignSwitcher(list, currentId) {
@@ -212,6 +231,7 @@ function signOutBtn() {
 export async function boot(pageFile, pageTitle) {
   document.title = `${pageTitle} · ${CONFIG.APP_NAME}`;
   const main = document.getElementById("main");
+  renderFooter();
   const mode = await initDb();
 
   if (!isReal()) {
