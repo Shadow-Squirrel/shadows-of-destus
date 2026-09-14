@@ -127,12 +127,16 @@ export function createFx(canvas, view) {
       const layer = await mod.createGlowLayer(canvas, wrap, { strength: 1, view });
       glow = layer;
       webgl = true;
+      try { console.info("[Onyx FX] GPU cinematic layer active (WebGL)"); } catch { /* fine */ }
       if ((effects.length || particles.length) && !running) {
         running = true; requestAnimationFrame(frame);
       } else if (glow) {
         glow.present();
       }
-    } catch { /* stay on canvas-2D */ }
+    } catch (e) {
+      // stay on canvas-2D, but say why so it can be diagnosed from the console
+      try { console.info("[Onyx FX] GPU layer unavailable — using canvas-2D fallback:", e && e.message); } catch { /* fine */ }
+    }
   }
 
   /* Tear down GPU resources when the board is destroyed. board.destroy()
