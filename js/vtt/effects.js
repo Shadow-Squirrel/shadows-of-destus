@@ -77,13 +77,84 @@ const ease = {
 
 export function createFx(canvas, view) {
   // view: { toPx({x,y}grid) → {x,y}px, cellPx() → px, feetToPx(ft) → px }
-  const ctx = canvas.getContext("2d");
+  //
+  // ── renderer abstraction ──────────────────────────────────────────
+  //  One drawing codebase (the pseudo-3D 2-D vector engine below) paints
+  //  into a "draw target". Two targets exist behind one interface:
+  //    • fallback  → the fx canvas directly (works everywhere).
+  //    • webgl     → an OFFSCREEN canvas that a PixiJS bloom layer then
+  //                  re-presents on the GPU with additive glow.
+  //  We start on the fallback immediately (so the very first cast never
+  //  waits on a CDN), then upgrade to webgl once Pixi has loaded and a
+  //  context exists — detected exactly once. `localStorage.sod-fx-force2d`
+  //  pins the fallback for verification. Everything draws through `ctx`;
+  //  repointing it switches targets with no per-stage changes.
+  const wrap = canvas.parentNode || null;
+  const force2d = (() => {
+    try {
+      const v = localStorage.getItem("sod-fx-force2d");
+      return v === "1" || v === "true";
+    } catch { return false; }
+  })();
+
+  const fxCtx = canvas.getContext("2d");   // the real fx canvas (fallback + clears)
+  let offscreen = null;                    // webgl draw target
+  let glow = null;                         // Pixi bloom layer (or null)
+  let webgl = false;                       // active renderer flag
+  let ctx = fxCtx;                         // the LIVE draw context (repointed on upgrade)
+
   let effects = [];   // {stages:[...], t0, from, to, palette}
-  let particles = []; // {x,y,vx,vy(px/s? grid/s), born, life, size, colorStops, kind, anchor}
+  let particles = []; // pseudo-3D motes: {grid,vx,vy,z,vz,zg,drag,gravity,born,life,size,palette,…}
   let running = false;
 
   const P = (gridPt) => view.toPx(gridPt);
   const F = (ft) => view.feetToPx(ft);
+
+  /* Bring up the GPU bloom layer once, asynchronously. On any failure we
+     simply stay on the (upgraded) canvas-2D path — the show never breaks. */
+  async function initWebgl() {
+    if (force2d || webgl || !wrap) return;
+    try {
+      const mod = await import("./fx-webgl.js");
+      if (!mod.webglAvailable()) return;
+      const off = document.createElement("canvas");
+      off.width = Math.max(1, canvas.width);
+      off.height = Math.max(1, canvas.height);
+      const layer = await mod.createGlowLayer(off, wrap, { strength: 1 });
+      // commit the switch
+      offscreen = off;
+      glow = layer;
+      ctx = offscreen.getContext("2d");
+      webgl = true;
+      // wipe any stale 2-D art from the fx canvas hiding under the GL layer
+      fxCtx.setTransform(1, 0, 0, 1, 0, 0);
+      fxCtx.clearRect(0, 0, canvas.width, canvas.height);
+      if ((effects.length || particles.length) && !running) {
+        running = true; requestAnimationFrame(frame);
+      } else if (glow) {
+        glow.present();
+      }
+    } catch { /* stay on canvas-2D */ }
+  }
+
+  /* Tear down GPU resources when the board is destroyed. board.destroy()
+     removes the fx canvas from the wrap; we watch for that and dispose. */
+  let domWatch = null;
+  if (wrap && typeof MutationObserver !== "undefined") {
+    domWatch = new MutationObserver(() => {
+      if (!canvas.isConnected) fxDestroy();
+    });
+    try { domWatch.observe(wrap, { childList: true }); } catch { /* fine */ }
+  }
+  function fxDestroy() {
+    effects = []; particles = []; running = false;
+    try { glow?.destroy(); } catch { /* fine */ }
+    glow = null; offscreen = null; webgl = false; ctx = fxCtx;
+    try { domWatch?.disconnect(); } catch { /* fine */ }
+    domWatch = null;
+  }
+
+  initWebgl();
 
   function spawnParticles(n, originGrid, opts) {
     const cap = 700 - particles.length;
@@ -91,6 +162,9 @@ export function createFx(canvas, view) {
     for (let i = 0; i < n; i++) {
       const ang = opts.angle != null ? opts.angle + rand(-opts.spread, opts.spread) : rand(0, TAU);
       const sp = rand(opts.speed[0], opts.speed[1]); // feet/sec
+      // opts.height → the mote lives in a real z channel: it pops UP off the
+      // floor, arcs under z-gravity, and casts a ground shadow (pseudo-3D).
+      const hgt = !!opts.height;
       particles.push({
         grid: { ...originGrid },
         vx: Math.cos(ang) * sp,
@@ -103,23 +177,58 @@ export function createFx(canvas, view) {
         palette: opts.palette,
         twinkle: opts.twinkle || false,
         rise: opts.rise || 0,
+        hgt,
+        z: 0,                                      // height in feet
+        vz: hgt ? (opts.vz != null ? opts.vz : rand(6, 15)) : 0,   // ft/s upward
+        zg: hgt ? (opts.zg != null ? opts.zg : 30) : 0,           // ft/s² pulling down
       });
     }
   }
 
   /* draw helpers (px space) */
+  // A glowing orb with a pseudo-3D lit core: the radial ramp is nudged
+  // up-left so the highlight sits off-centre like a lit sphere, and a
+  // tight hot pip is stacked on top — reads as volume, not a flat disc.
   const glowCircle = (x, y, r, palette, alpha) => {
     if (r <= 0.5) return;
-    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    const hx = x - r * 0.22, hy = y - r * 0.22;               // highlight offset
+    const g = ctx.createRadialGradient(hx, hy, 0, x, y, r);
     g.addColorStop(0, palette.core);
-    g.addColorStop(0.45, palette.mid);
+    g.addColorStop(0.42, palette.mid);
     g.addColorStop(1, "rgba(0,0,0,0)");
     ctx.globalAlpha = alpha;
     ctx.fillStyle = g;
     ctx.beginPath();
     ctx.arc(x, y, r, 0, TAU);
     ctx.fill();
+    if (r > 5) {                                              // white-hot specular pip
+      const s = ctx.createRadialGradient(hx, hy, 0, hx, hy, r * 0.5);
+      s.addColorStop(0, "rgba(255,255,255,.9)");
+      s.addColorStop(1, "rgba(255,255,255,0)");
+      ctx.globalAlpha = alpha * 0.7;
+      ctx.fillStyle = s;
+      ctx.beginPath();
+      ctx.arc(hx, hy, r * 0.5, 0, TAU);
+      ctx.fill();
+    }
     ctx.globalAlpha = 1;
+  };
+
+  // A soft ground shadow (source-over dark ellipse) to plant a raised
+  // effect on the floor. Foreshortened in y to imply the ground plane.
+  const groundShadow = (x, y, r, alpha) => {
+    if (r <= 0.5) return;
+    const g = ctx.createRadialGradient(x, y, 0, x, y, r);
+    g.addColorStop(0, `rgba(0,0,0,${0.4 * alpha})`);
+    g.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = g;
+    ctx.beginPath();
+    ctx.ellipse(x, y, r, r * 0.45, 0, 0, TAU);
+    ctx.fill();
+    ctx.restore();
   };
 
   function jaggedPath(a, b, jag, forks) {
@@ -144,15 +253,132 @@ export function createFx(canvas, view) {
     return paths;
   }
 
+  /* ── a wall of mortared, beveled stone blocks ──────────────────────
+     Drawn in the wall's own rotated frame (x = along the wall 0..len,
+     y = across the thickness -ht..+ht) so blocks are simple rects. Two
+     running-bond courses, each block bevel-lit up-left + shadowed
+     down-right, mortar seams showing the dark base between them, a lit
+     top-face strip along the near long edge, a soft cast shadow on the
+     ground, and a little rubble/dust as it grinds up. Per-block tone and
+     rubble are seeded ONCE (stable — a wall shouldn't shimmer). */
+  function stoneWall(s, eff, a, dir, lenPx, dlPx, ht, cs, alpha, wipe) {
+    const TONES = ["#6d6458", "#766c5e", "#635a4f", "#7c7365", "#5d564b", "#6a6053"];
+    const MORTAR = "#211d17", LIGHT = "#a89c88", TOP = "#b7ac97", DARK = "#2a251f";
+    const blockLen = Math.max(10 * cs, 16 * cs);
+    const nBlk = Math.max(2, Math.round(lenPx / blockLen));
+    const bw = lenPx / nBlk;                                    // block length along wall
+    const gap = Math.max(1.4, 2.2 * cs);                       // mortar seam width
+    // seed stable per-course block data for the FULL length once
+    if (!s._sw || s._sw.n !== nBlk) {
+      const rows = [];
+      for (let c = 0; c < 2; c++) {
+        const off = c === 1 ? bw / 2 : 0;
+        const cells = [];
+        for (let x = -bw; x < lenPx + bw; x += bw) {
+          cells.push({
+            x0: x + off, tone: TONES[(Math.random() * TONES.length) | 0],
+            jy: rand(-1.2, 1.2) * cs, jl: rand(-2, 2) * cs,
+          });
+        }
+        rows.push(cells);
+      }
+      const rubble = [];
+      for (let i = 0; i < Math.max(3, nBlk); i++)
+        rubble.push({ x: rand(0, lenPx), y: (rand(0, 1) < 0.5 ? -1 : 1) * (ht + rand(1, 5) * cs), r: rand(2, 5) * cs, tone: TONES[(Math.random() * TONES.length) | 0] });
+      s._sw = { n: nBlk, rows, rubble };
+    }
+
+    ctx.save();
+    ctx.globalCompositeOperation = "source-over";
+    ctx.globalAlpha = alpha;
+
+    // 1) cast shadow on the ground — screen-space offset (down-right), soft
+    const sox = 5 * cs, soy = 7 * cs, nX = Math.cos(dir), nY = Math.sin(dir), pX = -Math.sin(dir), pY = Math.cos(dir);
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.34; ctx.fillStyle = "#000";
+    ctx.shadowColor = "rgba(0,0,0,.5)"; ctx.shadowBlur = 8 * cs;
+    ctx.beginPath();
+    ctx.moveTo(a.x + pX * ht + sox, a.y + pY * ht + soy);
+    ctx.lineTo(a.x + nX * dlPx + pX * ht + sox, a.y + nY * dlPx + pY * ht + soy);
+    ctx.lineTo(a.x + nX * dlPx - pX * ht + sox, a.y + nY * dlPx - pY * ht + soy);
+    ctx.lineTo(a.x - pX * ht + sox, a.y - pY * ht + soy);
+    ctx.closePath(); ctx.fill();
+    ctx.restore();
+
+    // enter the wall's local frame
+    ctx.translate(a.x, a.y);
+    ctx.rotate(dir);
+    // clip to the built length so blocks appear as the wall grows in
+    ctx.beginPath();
+    ctx.rect(-bw, -ht - 8 * cs, dlPx + bw, 2 * ht + 16 * cs);
+    ctx.clip();
+
+    // 2) dark mortar base slab (seams show through the block gaps)
+    ctx.fillStyle = MORTAR;
+    ctx.fillRect(-bw, -ht, lenPx + 2 * bw, 2 * ht);
+
+    // 3) the two courses of beveled blocks
+    const courseH = ht;                                         // each course spans one half-thickness
+    for (let c = 0; c < 2; c++) {
+      const y0 = -ht + c * courseH;
+      for (const cell of s._sw.rows[c]) {
+        const x = cell.x0 + gap / 2;
+        const w = bw - gap + cell.jl;
+        if (x > dlPx || x + w < 0) continue;                   // outside built length
+        const yy = y0 + gap / 2, hh = courseH - gap;
+        if (w <= 1 || hh <= 1) continue;
+        // face
+        ctx.fillStyle = cell.tone;
+        ctx.fillRect(x, yy, w, hh);
+        // bevel: lit top+left, shadowed bottom+right
+        ctx.lineWidth = Math.max(1, 1.3 * cs);
+        ctx.strokeStyle = LIGHT;
+        ctx.beginPath(); ctx.moveTo(x + 0.5, yy + hh - 0.5); ctx.lineTo(x + 0.5, yy + 0.5); ctx.lineTo(x + w - 0.5, yy + 0.5); ctx.stroke();
+        ctx.strokeStyle = DARK;
+        ctx.beginPath(); ctx.moveTo(x + w - 0.5, yy + 0.5); ctx.lineTo(x + w - 0.5, yy + hh - 0.5); ctx.lineTo(x + 0.5, yy + hh - 0.5); ctx.stroke();
+      }
+    }
+
+    // 4) lit top-face strip along the near long edge (wall catches the light)
+    const strip = Math.max(2, ht * 0.34);
+    const tg = ctx.createLinearGradient(0, -ht, 0, -ht + strip);
+    tg.addColorStop(0, TOP); tg.addColorStop(1, "rgba(183,172,151,0)");
+    ctx.fillStyle = tg;
+    ctx.globalAlpha = alpha * 0.85;
+    ctx.fillRect(0, -ht, dlPx, strip);
+    ctx.globalAlpha = alpha;
+
+    // 5) rubble at the base
+    for (const rb of s._sw.rubble) {
+      if (rb.x > dlPx) continue;
+      ctx.fillStyle = rb.tone;
+      ctx.beginPath(); ctx.ellipse(rb.x, rb.y, rb.r, rb.r * 0.7, rb.x, 0, TAU); ctx.fill();
+      ctx.strokeStyle = DARK; ctx.lineWidth = Math.max(0.75, cs); ctx.stroke();
+    }
+    ctx.restore();
+
+    // 6) grinding dust as it rises (lofted, casts its own shadow)
+    if (Math.random() < 0.5) {
+      const f = Math.random();
+      spawnParticles(1, { x: eff.from.x + (eff.to.x - eff.from.x) * f * wipe, y: eff.from.y + (eff.to.y - eff.from.y) * f * wipe },
+        { speed: [1, 4], life: [400, 900], size: [2, 5], palette: pal("dust"), drag: 0.9, height: true, vz: rand(4, 9), zg: 14 });
+    }
+  }
+
   /* per-stage renderers: (stage, tNorm, eff) with ctx ready */
   const STAGE = {
     projectile(s, t, eff) {
       const a = P(eff.from), b = P(eff.to);
       const tt = ease.inOut(t);
+      const cs = view.cellPx() / 70;
       const arc = (s.arc ?? 0.25) * Math.sin(Math.PI * tt) * F(10);
-      const x = a.x + (b.x - a.x) * tt;
-      const y = a.y + (b.y - a.y) * tt - arc;
-      glowCircle(x, y, (s.size ?? 9) * (view.cellPx() / 70), eff.palette, 1);
+      const gx = a.x + (b.x - a.x) * tt, gy = a.y + (b.y - a.y) * tt; // ground point
+      const x = gx, y = gy - arc;                                     // lifted by arc
+      const R = (s.size ?? 9) * cs;
+      // shadow shrinks & fades as the bolt rises — sells the height
+      const h = arc / Math.max(1, F(10));
+      groundShadow(gx, gy, R * (1.1 - h * 0.6), 0.55 * (1 - h * 0.5));
+      glowCircle(x, y, R, eff.palette, 1);
       if (Math.random() < 0.8)
         spawnParticles(2, pxToGridApprox({ x, y }), {
           speed: [1, 5], life: [200, 450], size: [2, 4], palette: eff.palette, drag: 0.9,
@@ -161,13 +387,21 @@ export function createFx(canvas, view) {
     burst(s, t, eff) {
       const c = P(s.at === "from" ? eff.from : eff.to);
       const R = F(s.radiusFt ?? 10);
+      // a fire burst scorches the ground it sits on — a dark foreshortened
+      // ellipse under the blast that lingers as the flames rise away
+      if (s.embers) {
+        const sc = ease.out(Math.min(1, t * 2));
+        groundShadow(c.x, c.y, R * 0.9 * sc, (1 - t) * 0.5);
+      }
       glowCircle(c.x, c.y, R * ease.out(t) * (s.scale ?? 1), eff.palette, (1 - t) * 0.9);
       if (t < 0.15 && !s._spawned) {
         s._spawned = true;
         const rf = s.radiusFt ?? 10;
         spawnParticles(s.particles ?? 50, s.at === "from" ? eff.from : eff.to, {
           speed: [rf * 1.2, rf * 3], life: [350, 900],
-          size: [2, 6], palette: eff.palette, drag: 0.88, gravity: s.embers ? 14 : 0,
+          size: [2, 6], palette: eff.palette, drag: 0.88,
+          // embers loft into the air (real z-arc + shadow); plain bursts stay flat
+          height: !!s.embers, vz: s.embers ? undefined : 0, zg: s.embers ? 24 : 0,
         });
       }
     },
@@ -456,7 +690,9 @@ export function createFx(canvas, view) {
       }
     },
 
-    /* a built barrier along the line — stone / ice / thorn / blade / force */
+    /* a built barrier along the line — stone / ice / thorn / blade / force.
+       Stone gets its own fully-modelled renderer (mortared beveled blocks,
+       lit top-face, cast shadow, rubble); the rest keep the slab look. */
     wall(s, t, eff) {
       const a = P(eff.from), b0 = P(eff.to);
       let dir = Math.atan2(b0.y - a.y, b0.x - a.x);
@@ -468,6 +704,9 @@ export function createFx(canvas, view) {
       const alpha = t > 0.9 ? (1 - t) / 0.1 : 1;
       const mat = MAT[s.material] || MAT.stone;
       const dl = len * wipe, bx = a.x + nx * dl, by = a.y + ny * dl;
+
+      if (s.material === "stone") { stoneWall(s, eff, a, dir, len, dl, ht, cs, alpha, wipe); return; }
+
       ctx.save();
       ctx.globalCompositeOperation = "source-over";    // solid material, not glow
       ctx.globalAlpha = alpha;
@@ -487,22 +726,20 @@ export function createFx(canvas, view) {
       ctx.beginPath(); ctx.moveTo(a.x - px * ht, a.y - py * ht); ctx.lineTo(bx - px * ht, by - py * ht); ctx.stroke();
       // material motifs
       const blocks = clamp(Math.round(dl / (12 * cs)), 2, 40);
-      if (s.material === "stone" || s.material === "thorn") {
+      if (s.material === "thorn") {
         ctx.strokeStyle = mat.seam; ctx.lineWidth = Math.max(1, 1.6 * cs);
         for (let i = 1; i < blocks; i++) {
           const f = i / blocks, x = a.x + nx * dl * f, y = a.y + ny * dl * f;
           ctx.beginPath(); ctx.moveTo(x + px * ht, y + py * ht); ctx.lineTo(x - px * ht, y - py * ht); ctx.stroke();
         }
-        if (s.material === "thorn") {                  // barbs poking out along both faces
-          ctx.fillStyle = mat.light;
-          for (let i = 0; i < blocks; i++) {
-            const f = (i + 0.5) / blocks, x = a.x + nx * dl * f, y = a.y + ny * dl * f, sgn = i % 2 ? 1 : -1;
-            ctx.beginPath();
-            ctx.moveTo(x + px * ht * sgn, y + py * ht * sgn);
-            ctx.lineTo(x + px * (ht + 7 * cs) * sgn + nx * 3 * cs, y + py * (ht + 7 * cs) * sgn + ny * 3 * cs);
-            ctx.lineTo(x + px * ht * sgn + nx * 5 * cs, y + py * ht * sgn + ny * 5 * cs);
-            ctx.closePath(); ctx.fill();
-          }
+        ctx.fillStyle = mat.light;                     // barbs poking out along both faces
+        for (let i = 0; i < blocks; i++) {
+          const f = (i + 0.5) / blocks, x = a.x + nx * dl * f, y = a.y + ny * dl * f, sgn = i % 2 ? 1 : -1;
+          ctx.beginPath();
+          ctx.moveTo(x + px * ht * sgn, y + py * ht * sgn);
+          ctx.lineTo(x + px * (ht + 7 * cs) * sgn + nx * 3 * cs, y + py * (ht + 7 * cs) * sgn + ny * 3 * cs);
+          ctx.lineTo(x + px * ht * sgn + nx * 5 * cs, y + py * ht * sgn + ny * 5 * cs);
+          ctx.closePath(); ctx.fill();
         }
       } else {                                          // ice / blade / force: glassy sheen + bright rim
         ctx.strokeStyle = mat.seam; ctx.lineWidth = Math.max(1.5, 2 * cs);
@@ -527,11 +764,6 @@ export function createFx(canvas, view) {
         }
       }
       ctx.restore();
-      if (s.material === "stone" && Math.random() < 0.4) {      // a little dust as it grinds up
-        const f = Math.random();
-        spawnParticles(1, { x: eff.from.x + (eff.to.x - eff.from.x) * f * wipe, y: eff.from.y + (eff.to.y - eff.from.y) * f * wipe },
-          { speed: [1, 4], life: [400, 800], size: [2, 5], palette: pal("dust"), drag: 0.9, rise: -4 });
-      }
     },
 
     /* expanding water rings, gently squashed like ripples seen on the ground */
@@ -831,6 +1063,16 @@ export function createFx(canvas, view) {
   }
 
   function frame(now) {
+    // keep the webgl offscreen the same device size as the fx canvas (the
+    // board resizes fxCanvas on layout/zoom-of-window/DPR changes)
+    if (webgl && offscreen && (offscreen.width !== canvas.width || offscreen.height !== canvas.height)) {
+      offscreen.width = Math.max(1, canvas.width);
+      offscreen.height = Math.max(1, canvas.height);
+      ctx = offscreen.getContext("2d");
+      try { glow.resize(offscreen.width, offscreen.height); } catch { /* fine */ }
+    }
+    const W = ctx.canvas.width, H = ctx.canvas.height;
+
     // fx-canvas fallback shake: a decaying random offset that settles to 0
     let sdx = 0, sdy = 0;
     const shaking = now - shakeStart < shakeDur;
@@ -840,7 +1082,7 @@ export function createFx(canvas, view) {
       sdy = (Math.cos(now / 11 + shakeSeed) + (Math.random() - 0.5)) * amp;
     }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.clearRect(0, 0, W, H);
     ctx.setTransform(1, 0, 0, 1, sdx, sdy);
     ctx.globalCompositeOperation = "lighter";
 
@@ -854,23 +1096,45 @@ export function createFx(canvas, view) {
       return alive;
     });
 
+    // ── particles: update physics, then draw pseudo-3D (depth-sorted,
+    //    airborne motes lifted by their z with a ground shadow beneath) ──
     const cellScale = view.cellPx() / 70;
+    const dt = 16 / 1000;
     particles = particles.filter((p) => {
       const age = now - p.born;
       if (age > p.life) return false;
-      const dt = 16 / 1000;
       p.grid.x += (p.vx * dt) / 5;                        // ft/s → cells (5 ft per cell)
       p.grid.y += (p.vy * dt) / 5 + ((p.rise || 0) * dt) / 5; // rise is ft/s too
       p.vx *= p.drag; p.vy = p.vy * p.drag + (p.gravity || 0) * dt;
-      const q = P(p.grid);
-      const lifeT = age / p.life;
-      const alpha = p.twinkle ? (0.4 + 0.6 * Math.abs(Math.sin(age / 60))) * (1 - lifeT) : 1 - lifeT;
-      glowCircle(q.x, q.y, p.size * cellScale * (1 - lifeT * 0.5), p.palette, alpha);
+      if (p.hgt) {                                        // height channel (feet)
+        p.z += p.vz * dt; p.vz -= p.zg * dt;
+        if (p.z < 0) { p.z = 0; p.vz *= -0.28; }          // settle with a soft bounce
+      }
       return true;
     });
+    // depth sort by screen y so lower motes read as nearer (front)
+    particles.sort((u, v) => (u.grid.y - v.grid.y));
+    // pass 1 — ground shadows for airborne motes (source-over, under the glow)
+    ctx.globalCompositeOperation = "source-over";
+    for (const p of particles) {
+      if (!p.hgt || p.z < 0.05) continue;
+      const q = P(p.grid), lifeT = (now - p.born) / p.life;
+      const sr = p.size * cellScale * (1 - lifeT * 0.4) * (1 + p.z * 0.02);
+      groundShadow(q.x, q.y, sr * 1.4, (1 - lifeT) * 0.5 / (1 + p.z * 0.08));
+    }
+    // pass 2 — the glowing motes, lifted by their height
+    ctx.globalCompositeOperation = "lighter";
+    for (const p of particles) {
+      const q = P(p.grid), lifeT = (now - p.born) / p.life;
+      const lift = p.hgt ? F(p.z) : 0;
+      const alpha = p.twinkle ? (0.4 + 0.6 * Math.abs(Math.sin((now - p.born) / 60))) * (1 - lifeT) : 1 - lifeT;
+      glowCircle(q.x, q.y - lift, p.size * cellScale * (1 - lifeT * 0.5), p.palette, alpha);
+    }
 
     ctx.globalCompositeOperation = "source-over";
     ctx.setTransform(1, 0, 0, 1, 0, 0);
+    // hand the freshly-painted offscreen to the GPU bloom layer
+    if (webgl && glow) glow.present();
     if (effects.length || particles.length || shaking) requestAnimationFrame(frame);
     else running = false;
   }
@@ -1385,18 +1649,57 @@ export function createFx(canvas, view) {
       stages.push(A({ type: "motes", dur: 1600, radiusFt: 5, count: 8 }));
       stages.push(A({ type: "ring", dur: 900, radiusFt: 4 }));
     }
-    // nothing yet? school-flavored aura on the target
+    // nothing yet? compose from damage/school so it still reads as THIS spell
     if (!stages.length) {
       if (sp.damage) {
         if (targeted) stages.push(A({ type: "projectile", dur: 450, size: 7, arc: 0.25 }));
         stages.push(A({ type: "burst", delay: targeted ? 450 : 0, dur: 500, radiusFt: 4, particles: 24 }));
       } else {
-        stages.push(A({ type: "implode", dur: 500, radiusFt: 6 }));
-        stages.push(A({ type: "sparkles", delay: 200, dur: 1300 }));
-        stages.push(A({ type: "ring", delay: 400, dur: 800, radiusFt: 4 }));
+        // a distinct signature per school of magic — no two schools alike, so
+        // even an obscure utility spell announces what KIND of magic it is
+        stages.push(...schoolFlourish(sp.school));
       }
     }
     return stages;
+  }
+
+  /* A school-specific "no-damage utility" composite. Each school reads
+     differently: abjuration wards, conjuration blooms in, divination
+     shows drifting sigils, enchantment/illusion swim with glyphs/haze,
+     necromancy pools gloom, transmutation reshapes with a quake, evocation
+     flares. Keeps every non-signature spell legible as its own school. */
+  function schoolFlourish(school) {
+    switch (school) {
+      case "abjuration":
+        return [A({ type: "ring", dur: 1200, at: "to", radiusFt: 6, linger: true }),
+                A({ type: "ring", delay: 120, dur: 900, radiusFt: 5, expand: true }),
+                A({ type: "sparkles", dur: 1100 })];
+      case "conjuration":
+        return [A({ type: "implode", dur: 420, radiusFt: 8 }),
+                A({ type: "burst", delay: 380, dur: 500, radiusFt: 5, particles: 26 }),
+                A({ type: "sparkles", delay: 380, dur: 1000 })];
+      case "divination":
+        return [A({ type: "glyphs", dur: 1600, radiusFt: 5, count: 4, dir: "up" }),
+                A({ type: "ring", delay: 150, dur: 1100, radiusFt: 4, linger: true })];
+      case "enchantment":
+        return [A({ type: "glyphs", dur: 1700, radiusFt: 5, count: 5, dir: "up" }),
+                A({ type: "ring", delay: 150, dur: 1300, radiusFt: 5, linger: true, dashed: true })];
+      case "illusion":
+        return [A({ type: "cloud", dur: 1500, radiusFt: 5 }),
+                A({ type: "sparkles", dur: 1300 }),
+                A({ type: "ring", delay: 150, dur: 1100, radiusFt: 5, linger: true, dashed: true })];
+      case "necromancy":
+        return [A({ type: "gloom", dur: 1400, radiusFt: 6 }),
+                A({ type: "sparkles", delay: 150, dur: 1200 })];
+      case "transmutation":
+        return [A({ type: "implode", dur: 500, radiusFt: 6 }),
+                A({ type: "quake", ms: 350, magFt: 0.35, radiusFt: 8 }),
+                A({ type: "sparkles", delay: 250, dur: 1200 })];
+      default: // evocation & anything unlabelled — a bright flare
+        return [A({ type: "burst", dur: 550, radiusFt: 5, particles: 30 }),
+                A({ type: "ring", delay: 60, dur: 700, radiusFt: 5, expand: true }),
+                A({ type: "sparkles", delay: 100, dur: 1000 })];
+    }
   }
 
   function paletteFor(sp) {
@@ -1451,5 +1754,10 @@ export function createFx(canvas, view) {
       play(stages, from || to, to, p);
     },
     clear() { effects = []; particles = []; },
+    /* release the GPU bloom layer + observer. Called automatically when the
+       board tears down the fx canvas; safe to call directly too. */
+    destroy() { fxDestroy(); },
+    /* which renderer is live — "webgl" once Pixi is up, else "canvas2d" */
+    renderer() { return webgl ? "webgl" : "canvas2d"; },
   };
 }
