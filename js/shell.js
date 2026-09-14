@@ -11,7 +11,12 @@
 //  ...or null if the visitor was stopped at the gate.
 // ─────────────────────────────────────────────────────────────
 import { CONFIG } from "./config.js";
-import { initDb, isReal, auth, members } from "./db.js";
+import { initDb, isReal, auth, members, campaigns, setCampaign, isLegacy } from "./db.js";
+
+/* ── which campaign is the user looking at? (remembered per browser) ── */
+const CAMP_KEY = "sod-campaign";
+const rememberedCampaign = () => { try { return localStorage.getItem(CAMP_KEY) || null; } catch { return null; } };
+const rememberCampaign = (id) => { try { localStorage.setItem(CAMP_KEY, id); } catch {} };
 
 /* ── tiny helpers every page imports ── */
 
@@ -73,11 +78,11 @@ const NAV = [
   ["party.html", "🛡️ Party"],
 ];
 
-function renderHeader(pageFile, who) {
+function renderHeader(pageFile, who, title) {
   const header = document.getElementById("site-header");
   header.innerHTML = `
     <div class="masthead">
-      <h1>${esc(CONFIG.CAMPAIGN_NAME)}</h1>
+      <h1>${esc(title || CONFIG.CAMPAIGN_NAME)}</h1>
       <span class="tagline">${esc(CONFIG.TAGLINE)}</span>
       <span class="who" id="who-slot"></span>
     </div>
@@ -85,6 +90,32 @@ function renderHeader(pageFile, who) {
       ${NAV.map(([file, label]) => `<a href="./${file}" class="${file === pageFile ? "active" : ""}">${label}</a>`).join("")}
     </nav>`;
   document.getElementById("who-slot").replaceChildren(...who);
+}
+
+// A dropdown of the user's campaigns + a link to manage them. Switching
+// remembers the choice and reloads so every page re-reads in the new scope.
+function campaignSwitcher(list, currentId) {
+  const wrap = document.createElement("span");
+  wrap.className = "camp-switch";
+  if (list.length > 1) {
+    const sel = document.createElement("select");
+    sel.className = "camp-select";
+    sel.innerHTML = list.map((c) => `<option value="${esc(c.id)}" ${c.id === currentId ? "selected" : ""}>${esc(c.name)}</option>`).join("");
+    sel.onchange = () => { rememberCampaign(sel.value); location.reload(); };
+    wrap.appendChild(sel);
+  } else {
+    const one = document.createElement("span");
+    one.className = "camp-one";
+    one.textContent = list[0]?.name || "";
+    wrap.appendChild(one);
+  }
+  const manage = document.createElement("a");
+  manage.href = "./campaigns.html";
+  manage.className = "camp-manage";
+  manage.title = "Manage campaigns";
+  manage.textContent = "⚙";
+  wrap.appendChild(manage);
+  return wrap;
 }
 
 function pill(text, cls = "") {
@@ -162,6 +193,21 @@ function renderPending(main, email) {
   document.getElementById("p-out").onclick = async () => { await auth.signOut(); location.reload(); };
 }
 
+// pick the campaign to show: the remembered one if still valid, else the first
+function chooseCampaign(list) {
+  const want = rememberedCampaign();
+  const hit = list.find((c) => c.id === want);
+  return (hit || list[0]).id;
+}
+
+function signOutBtn() {
+  const out = document.createElement("button");
+  out.className = "btn-ghost";
+  out.textContent = "Sign out";
+  out.onclick = async () => { await auth.signOut(); location.reload(); };
+  return out;
+}
+
 /* ── boot: call this first on every page ── */
 export async function boot(pageFile, pageTitle) {
   document.title = `${pageTitle} · ${CONFIG.CAMPAIGN_NAME}`;
@@ -169,39 +215,103 @@ export async function boot(pageFile, pageTitle) {
   const mode = await initDb();
 
   if (!isReal()) {
-    renderHeader(pageFile, [pill("demo mode", "mystic")]);
+    // demo: two sample campaigns so the switcher is real
+    const list = await campaigns.mine("dm@example.com");
+    const currentId = chooseCampaign(list);
+    setCampaign(currentId);
+    const current = list.find((c) => c.id === currentId);
+    renderHeader(pageFile, [pill("demo mode", "mystic"), campaignSwitcher(list, currentId)], current?.name);
     banner(`🧪 <strong>Demo mode</strong> — sample data, and edits vanish on refresh.
       You're previewing as the DM so every control is visible.
       Connect your free database to make it real (README, step 2).`);
     const me = { email: "dm@example.com", name: "You (DM preview)", role: "dm", isDM: true };
     const all = await members.list();
-    return { mode, me, members: all, nameOf: nameResolver(all, me) };
+    return { mode, me, campaign: current, campaigns: list, members: all, nameOf: nameResolver(all, me) };
   }
 
   const session = await auth.session();
   if (!session) { renderHeader(pageFile, []); renderGate(main); return null; }
 
-  const me = await members.mine(session.email);
-  if (!me) { renderHeader(pageFile, []); renderPending(main, session.email); return null; }
+  // which campaigns does this signed-in person belong to?
+  let myCampaigns = [];
+  try { myCampaigns = await campaigns.mine(session.email); }
+  catch (e) { renderHeader(pageFile, [signOutBtn()]); banner(`⚠ ${esc(e.message)}`, true); return null; }
 
-  const out = document.createElement("button");
-  out.className = "btn-ghost";
-  out.textContent = "Sign out";
-  out.onclick = async () => { await auth.signOut(); location.reload(); };
+  // Legacy: multi-campaign migration not applied yet → behave like the old
+  // single-campaign site so nothing breaks until the DM runs the update.
+  if (isLegacy()) {
+    setCampaign(null);
+    const meL = await members.mine(session.email);
+    if (!meL) { renderHeader(pageFile, [signOutBtn()]); renderPending(main, session.email); return null; }
+    renderHeader(pageFile, [
+      document.createTextNode(meL.display_name || session.email),
+      pill(meL.role === "dm" ? "DM" : "player", meL.role === "dm" ? "gold" : "steel"),
+      signOutBtn(),
+    ], CONFIG.CAMPAIGN_NAME);
+    const allL = await members.list();
+    const ctxL = {
+      mode, legacy: true,
+      me: { email: session.email.toLowerCase(), name: meL.display_name, role: meL.role, isDM: meL.role === "dm" },
+      campaign: null, campaigns: [], members: allL,
+    };
+    ctxL.nameOf = nameResolver(allL, ctxL.me);
+    return ctxL;
+  }
+
+  if (!myCampaigns.length) {
+    renderHeader(pageFile, [document.createTextNode(session.email), signOutBtn()]);
+    renderNoCampaigns(main, session.email);
+    return null;
+  }
+
+  const currentId = chooseCampaign(myCampaigns);
+  rememberCampaign(currentId);
+  setCampaign(currentId);
+  const current = myCampaigns.find((c) => c.id === currentId);
+
+  const me = await members.mine(session.email);
+  if (!me) { renderHeader(pageFile, [signOutBtn()]); renderPending(main, session.email); return null; }
+
   renderHeader(pageFile, [
+    campaignSwitcher(myCampaigns, currentId),
     document.createTextNode(me.display_name || session.email),
     pill(me.role === "dm" ? "DM" : "player", me.role === "dm" ? "gold" : "steel"),
-    out,
-  ]);
+    signOutBtn(),
+  ], current?.name);
 
   const all = await members.list();
   const ctx = {
     mode,
     me: { email: session.email.toLowerCase(), name: me.display_name, role: me.role, isDM: me.role === "dm" },
+    campaign: current,
+    campaigns: myCampaigns,
     members: all,
   };
   ctx.nameOf = nameResolver(all, ctx.me);
   return ctx;
+}
+
+/* ── signed in, but not in any campaign yet ── */
+function renderNoCampaigns(main, email) {
+  main.innerHTML = `
+    <div class="card gate">
+      <h2>Welcome, ${esc(email)}</h2>
+      <p class="muted small">You're signed in but not part of any campaign yet. Start your own
+      table below, or ask a DM to invite this email to theirs — then refresh.</p>
+      <label class="field">Name your first campaign</label>
+      <input type="text" id="nc-name" placeholder="e.g. Shadows of Destus" />
+      <div class="actions">
+        <button class="btn" id="nc-go">Create campaign</button>
+        <span class="muted small" id="nc-msg"></span>
+      </div>
+    </div>`;
+  document.getElementById("nc-go").onclick = () => guard(async () => {
+    const name = document.getElementById("nc-name").value.trim() || "My Campaign";
+    document.getElementById("nc-msg").textContent = "…";
+    const c = await campaigns.create(name);
+    if (c?.id) rememberCampaign(c.id);
+    location.reload();
+  });
 }
 
 function nameResolver(all, me) {

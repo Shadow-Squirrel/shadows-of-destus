@@ -58,6 +58,19 @@ header.site {
 .masthead .tagline { color: var(--muted); font-style: italic; font-size: 15px; }
 .masthead .who { margin-left: auto; display: flex; align-items: center; gap: 10px; font-size: 14px; color: var(--muted); }
 
+/* campaign switcher (in the header) */
+.camp-switch { display: inline-flex; align-items: center; gap: 6px; }
+.camp-select {
+  width: auto; padding: 4px 8px; font-size: 13px; font-family: var(--font-display);
+  background: #14100a; color: var(--gold); border: 1px solid var(--gold-soft); border-radius: 8px;
+}
+.camp-one { font-family: var(--font-display); color: var(--gold); font-size: 13.5px; letter-spacing: .04em; }
+.camp-manage {
+  text-decoration: none; color: var(--muted); border: 1px solid var(--border); border-radius: 8px;
+  padding: 2px 8px; font-size: 14px;
+}
+.camp-manage:hover { color: var(--gold); border-color: var(--gold-soft); }
+
 nav.site {
   max-width: 1100px; margin: 12px auto 0;
   display: flex; gap: 4px; flex-wrap: wrap;

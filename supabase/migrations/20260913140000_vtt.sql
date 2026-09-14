@@ -100,6 +100,6 @@ drop trigger if exists tokens_guard_update on tokens;
 create trigger tokens_guard_update before update on tokens
   for each row execute function guard_token_update();
 
--- live sync for every open battle map
-alter publication supabase_realtime add table encounters;
-alter publication supabase_realtime add table tokens;
+-- live sync for every open battle map (idempotent — safe to re-run)
+do $$ begin alter publication supabase_realtime add table encounters; exception when duplicate_object then null; end $$;
+do $$ begin alter publication supabase_realtime add table tokens; exception when duplicate_object then null; end $$;

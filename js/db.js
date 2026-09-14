@@ -33,6 +33,35 @@ async function q(promise) {
   return data;
 }
 
+/* ═══ Campaign context ═══
+   Every page runs inside ONE campaign. shell.js resolves which one
+   (from the user's memberships + a remembered choice) and calls
+   setCampaign() before any page code runs. All content reads/writes
+   below are scoped to it; the database's RLS enforces the same
+   boundary independently, so this scoping is convenience, not the
+   security. */
+let campaignId = null;
+export const setCampaign = (id) => { campaignId = id; };
+export const getCampaign = () => campaignId;
+
+// Legacy mode: the multi-campaign migration hasn't been applied yet, so the
+// campaign tables/columns don't exist. We then behave like the old
+// single-campaign site (no campaign filter, no switcher) so nothing breaks
+// in the window between deploying this code and running the migration.
+let legacy = false;
+export const isLegacy = () => legacy;
+const notThere = (e) => /does not exist|relation|schema cache|Could not find|column .* does not exist/i.test(e?.message || "");
+
+function cid() {
+  if (!campaignId) throw new Error("No campaign selected");
+  return campaignId;
+}
+// Add the campaign filter / stamp ONLY when we're in multi-campaign mode.
+const scope = (query) => (campaignId && !legacy ? query.eq("campaign_id", campaignId) : query);
+const stamp = (row) => (campaignId && !legacy ? { ...row, campaign_id: campaignId } : { ...row });
+// demo rows without an explicit campaign belong to the first demo campaign
+const inCampaign = (row) => legacy || (row.campaign_id ?? "demo-a") === campaignId;
+
 /* ═══ Demo data (what you see before Supabase is connected) ═══ */
 const now = Date.now();
 const ago = (d) => new Date(now - d * 864e5).toISOString();
@@ -237,7 +266,24 @@ A sentence each is plenty.
     { id: "tk2", encounter_id: "enc1", kind: "monster", character_id: null, monster_index: "goblin", label: "Goblin A", x: 8, y: 4, size: 1, color: "#c05b4d", hp_current: 7, hp_max: 7, conditions: ["prone"], hidden: false, initiative: 12, created_at: ago(1) },
     { id: "tk3", encounter_id: "enc1", kind: "monster", character_id: null, monster_index: "wolf", label: "Wolf", x: 9, y: 6, size: 1, color: "#8fa3b0", hp_current: 11, hp_max: 11, conditions: [], hidden: true, initiative: 8, created_at: ago(1) },
   ],
+  // two demo campaigns so the switcher is real; existing demo content
+  // above belongs to "demo-a" (see inCampaign()).
+  campaigns: [
+    { id: "demo-a", name: "Shadows of Destus", owner_email: "dm@example.com", created_at: ago(40) },
+    { id: "demo-b", name: "A Second Table", owner_email: "dm@example.com", created_at: ago(3) },
+  ],
+  campaignMembers: [
+    { id: uid(), campaign_id: "demo-a", email: "dm@example.com", role: "dm", display_name: "The DM" },
+    { id: uid(), campaign_id: "demo-a", email: "tav@example.com", role: "player", display_name: "Tav's player" },
+    { id: uid(), campaign_id: "demo-b", email: "dm@example.com", role: "dm", display_name: "The DM" },
+  ],
+  campaignCharacters: [
+    { campaign_id: "demo-a", character_id: "ch-demo-1" },
+  ],
 };
+// a little content in the second demo campaign so switching is visible
+DEMO.sections.push({ id: uid(), campaign_id: "demo-b", sort_order: 1, title: "A Second Table", body: "This is a *different* campaign. Notice the quests, maps, and notes are all its own — nothing leaks between campaigns." });
+DEMO.quests.push({ id: uid(), campaign_id: "demo-b", title: "The Other Campaign's Secret", status: "active", giver: "", location: "", reward: "", summary: "Only visible while you're viewing 'A Second Table'.", created_at: ago(2) });
 
 const sortNew = (arr) => [...arr].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
 
@@ -253,35 +299,90 @@ export const auth = {
   signOut: () => sb.auth.signOut(),
 };
 
-/* ═══ Members (the invite list) ═══ */
-export const members = {
+/* ═══ Campaigns — the tenant boundary ═══
+   Each DM runs their own campaigns and invites their own players.
+   A person can be a DM of some and a player in others. */
+export const campaigns = {
+  // every campaign the signed-in user belongs to (their memberships).
+  // If the multi-campaign migration isn't applied yet, flips to legacy
+  // mode and returns [] so boot() runs the old single-campaign flow.
   mine: async (email) => {
-    if (!sb) return DEMO.members[0];
-    const rows = await q(sb.from("members").select("*").ilike("email", email).limit(1));
-    return rows[0] || null;
+    if (!sb) return [...DEMO.campaigns];
+    try {
+      const rows = await q(
+        sb.from("campaign_members").select("campaign_id, role, campaigns(id, name, owner_email, created_at)").ilike("email", email)
+      );
+      return rows
+        .map((r) => r.campaigns && { ...r.campaigns, myRole: r.role })
+        .filter(Boolean)
+        .sort((a, b) => (a.created_at < b.created_at ? -1 : 1));
+    } catch (e) {
+      if (!notThere(e)) throw e;
+      legacy = true;
+      return [];
+    }
   },
-  list: async () => (sb ? q(sb.from("members").select("*").order("display_name")) : DEMO.members),
-  add: async (email, display_name, role) => {
-    if (!sb) return DEMO.members.push({ id: uid(), email, display_name, role });
-    await q(sb.from("members").insert({ email: email.toLowerCase(), display_name, role }));
+  create: async (name) => {
+    if (!sb) {
+      const c = { id: uid(), name: name || "New Campaign", owner_email: "dm@example.com", created_at: new Date().toISOString(), myRole: "dm" };
+      DEMO.campaigns.push(c);
+      DEMO.campaignMembers.push({ id: uid(), campaign_id: c.id, email: "dm@example.com", role: "dm", display_name: "The DM" });
+      return c;
+    }
+    return q(sb.rpc("create_campaign", { p_name: name || "New Campaign" }));
+  },
+  rename: async (id, name) => {
+    if (!sb) { const c = DEMO.campaigns.find((x) => x.id === id); if (c) c.name = name; return; }
+    await q(sb.from("campaigns").update({ name }).eq("id", id));
   },
   remove: async (id) => {
-    if (!sb) return (DEMO.members = DEMO.members.filter((m) => m.id !== id));
-    await q(sb.from("members").delete().eq("id", id));
+    if (!sb) { DEMO.campaigns = DEMO.campaigns.filter((c) => c.id !== id); return; }
+    await q(sb.from("campaigns").delete().eq("id", id));
+  },
+};
+
+/* ═══ Members of the CURRENT campaign ═══
+   In legacy mode (migration not yet applied) these fall back to the old
+   single-campaign `members` table so the site keeps working. */
+export const members = {
+  // my membership row (role, name) in the current campaign
+  mine: async (email) => {
+    if (!sb) return DEMO.campaignMembers.find((m) => m.campaign_id === campaignId && m.email.toLowerCase() === String(email).toLowerCase()) || null;
+    if (legacy) { const r = await q(sb.from("members").select("*").ilike("email", email).limit(1)); return r[0] || null; }
+    const rows = await q(sb.from("campaign_members").select("*").eq("campaign_id", cid()).ilike("email", email).limit(1));
+    return rows[0] || null;
+  },
+  list: async () => {
+    if (!sb) return DEMO.campaignMembers.filter((m) => m.campaign_id === campaignId);
+    if (legacy) return q(sb.from("members").select("*").order("display_name"));
+    return q(sb.from("campaign_members").select("*").eq("campaign_id", cid()).order("display_name"));
+  },
+  add: async (email, display_name, role) => {
+    if (!sb) return DEMO.campaignMembers.push({ id: uid(), campaign_id: campaignId, email, display_name, role });
+    if (legacy) return void (await q(sb.from("members").insert({ email: email.toLowerCase(), display_name, role })));
+    await q(sb.from("campaign_members").insert({ campaign_id: cid(), email: email.toLowerCase(), display_name, role }));
+  },
+  setRole: async (id, role) => {
+    if (!sb) { const m = DEMO.campaignMembers.find((x) => x.id === id); if (m) m.role = role; return; }
+    await q(sb.from(legacy ? "members" : "campaign_members").update({ role }).eq("id", id));
+  },
+  remove: async (id) => {
+    if (!sb) return (DEMO.campaignMembers = DEMO.campaignMembers.filter((m) => m.id !== id));
+    await q(sb.from(legacy ? "members" : "campaign_members").delete().eq("id", id));
   },
 };
 
 /* ═══ Campaign sections (home page) ═══ */
 export const sections = {
-  list: async () => (sb ? q(sb.from("campaign_sections").select("*").order("sort_order")) : [...DEMO.sections].sort((a, b) => a.sort_order - b.sort_order)),
+  list: async () => (sb ? q(scope(sb.from("campaign_sections").select("*")).order("sort_order")) : DEMO.sections.filter(inCampaign).sort((a, b) => a.sort_order - b.sort_order)),
   save: async (row) => {
     if (!sb) {
       if (row.id) Object.assign(DEMO.sections.find((s) => s.id === row.id), row);
-      else DEMO.sections.push({ ...row, id: uid() });
+      else DEMO.sections.push({ ...row, id: uid(), campaign_id: campaignId });
       return;
     }
     if (row.id) await q(sb.from("campaign_sections").update({ title: row.title, body: row.body, sort_order: row.sort_order }).eq("id", row.id));
-    else await q(sb.from("campaign_sections").insert(row));
+    else await q(sb.from("campaign_sections").insert(stamp(row)));
   },
   remove: async (id) => {
     if (!sb) return (DEMO.sections = DEMO.sections.filter((s) => s.id !== id));
@@ -291,11 +392,11 @@ export const sections = {
 
 /* ═══ Quests + their update log ═══ */
 export const quests = {
-  list: async () => (sb ? q(sb.from("quests").select("*").order("created_at", { ascending: false })) : sortNew(DEMO.quests)),
-  updates: async () => (sb ? q(sb.from("quest_updates").select("*").order("created_at")) : [...DEMO.questUpdates]),
+  list: async () => (sb ? q(scope(sb.from("quests").select("*")).order("created_at", { ascending: false })) : sortNew(DEMO.quests.filter(inCampaign))),
+  updates: async () => (sb ? q(scope(sb.from("quest_updates").select("*")).order("created_at")) : [...DEMO.questUpdates]),
   add: async (row) => {
-    if (!sb) return DEMO.quests.push({ ...row, id: uid(), created_at: new Date().toISOString() });
-    await q(sb.from("quests").insert(row));
+    if (!sb) return DEMO.quests.push({ ...row, id: uid(), campaign_id: campaignId, created_at: new Date().toISOString() });
+    await q(sb.from("quests").insert(stamp(row)));
   },
   update: async (id, fields) => {
     if (!sb) return Object.assign(DEMO.quests.find((x) => x.id === id), fields);
@@ -307,16 +408,16 @@ export const quests = {
   },
   addUpdate: async (quest_id, body) => {
     if (!sb) return DEMO.questUpdates.push({ id: uid(), quest_id, body, created_at: new Date().toISOString() });
-    await q(sb.from("quest_updates").insert({ quest_id, body }));
+    await q(sb.from("quest_updates").insert(stamp({ quest_id, body })));
   },
 };
 
 /* ═══ Notes ═══ */
 export const notes = {
-  list: async () => (sb ? q(sb.from("notes").select("*").order("created_at", { ascending: false })) : sortNew(DEMO.notes)),
+  list: async () => (sb ? q(scope(sb.from("notes").select("*")).order("created_at", { ascending: false })) : sortNew(DEMO.notes.filter(inCampaign))),
   add: async (row) => {
-    if (!sb) return DEMO.notes.push({ ...row, id: uid(), author_email: "dm@example.com", created_at: new Date().toISOString() });
-    await q(sb.from("notes").insert(row));
+    if (!sb) return DEMO.notes.push({ ...row, id: uid(), campaign_id: campaignId, author_email: "dm@example.com", created_at: new Date().toISOString() });
+    await q(sb.from("notes").insert(stamp(row)));
   },
   remove: async (id) => {
     if (!sb) return (DEMO.notes = DEMO.notes.filter((n) => n.id !== id));
@@ -326,11 +427,11 @@ export const notes = {
 
 /* ═══ Codex (people & creatures met) ═══ */
 export const codex = {
-  list: async () => (sb ? q(sb.from("codex_entries").select("*").order("created_at", { ascending: false })) : sortNew(DEMO.codex)),
-  notes: async () => (sb ? q(sb.from("codex_notes").select("*").order("created_at")) : [...DEMO.codexNotes]),
+  list: async () => (sb ? q(scope(sb.from("codex_entries").select("*")).order("created_at", { ascending: false })) : sortNew(DEMO.codex.filter(inCampaign))),
+  notes: async () => (sb ? q(scope(sb.from("codex_notes").select("*")).order("created_at")) : [...DEMO.codexNotes]),
   add: async (row) => {
-    if (!sb) return DEMO.codex.push({ ...row, id: uid(), author_email: "dm@example.com", created_at: new Date().toISOString() });
-    await q(sb.from("codex_entries").insert(row));
+    if (!sb) return DEMO.codex.push({ ...row, id: uid(), campaign_id: campaignId, author_email: "dm@example.com", created_at: new Date().toISOString() });
+    await q(sb.from("codex_entries").insert(stamp(row)));
   },
   update: async (id, fields) => {
     if (!sb) return Object.assign(DEMO.codex.find((x) => x.id === id), fields);
@@ -342,7 +443,7 @@ export const codex = {
   },
   addNote: async (entry_id, body) => {
     if (!sb) return DEMO.codexNotes.push({ id: uid(), entry_id, body, author_email: "dm@example.com", created_at: new Date().toISOString() });
-    await q(sb.from("codex_notes").insert({ entry_id, body }));
+    await q(sb.from("codex_notes").insert(stamp({ entry_id, body })));
   },
   removeNote: async (id) => {
     if (!sb) return (DEMO.codexNotes = DEMO.codexNotes.filter((n) => n.id !== id));
@@ -354,8 +455,8 @@ export const codex = {
 export const maps = {
   list: async () =>
     sb
-      ? q(sb.from("maps").select("*").order("sort_order").order("created_at", { ascending: false }))
-      : [...DEMO.maps].sort((a, b) => (a.sort_order ?? 100) - (b.sort_order ?? 100)),
+      ? q(scope(sb.from("maps").select("*")).order("sort_order").order("created_at", { ascending: false }))
+      : DEMO.maps.filter(inCampaign).sort((a, b) => (a.sort_order ?? 100) - (b.sort_order ?? 100)),
   // Map images live in a PRIVATE storage bucket. This turns their
   // storage paths into short-lived viewable URLs — and storage
   // itself re-checks that this user may see each file.
@@ -367,16 +468,18 @@ export const maps = {
     return out;
   },
   add: async (row) => {
-    if (!sb) return DEMO.maps.push({ ...row, id: uid(), created_at: new Date().toISOString() });
-    await q(sb.from("maps").insert(row));
+    if (!sb) return DEMO.maps.push({ ...row, id: uid(), campaign_id: campaignId, created_at: new Date().toISOString() });
+    await q(sb.from("maps").insert(stamp(row)));
   },
   // DM-only: upload a map image at FULL resolution (maps keep
-  // their detail — no shrinking, unlike note photos).
+  // their detail — no shrinking, unlike note photos). Files are
+  // foldered by campaign so one campaign's images sit apart from
+  // another's in storage.
   upload: async (file) => {
     if (!sb) return null; // demo mode can't store images
     const base = file.name.replace(/\.[^.]+$/, "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "map";
     const ext = (file.name.split(".").pop() || "img").toLowerCase();
-    const path = `${base}-${uid().slice(0, 4)}.${ext}`;
+    const path = `${campaignId && !legacy ? cid() + "/" : ""}${base}-${uid().slice(0, 4)}.${ext}`;
     await q(sb.storage.from("maps").upload(path, file, { contentType: file.type || "image/jpeg" }));
     return path;
   },
@@ -442,7 +545,7 @@ export const images = {
 export const dice = {
   list: async () =>
     sb
-      ? q(sb.from("rolls").select("*").order("created_at", { ascending: false }).limit(30))
+      ? q(scope(sb.from("rolls").select("*")).order("created_at", { ascending: false }).limit(30))
       : sortNew(DEMO.rolls).slice(0, 30),
   // Real mode calls the server's roll_dice() so results can't be
   // forged. Demo mode rolls locally (and forgets on refresh).
@@ -457,7 +560,9 @@ export const dice = {
       DEMO.rolls.unshift(row);
       return row;
     }
-    return q(sb.rpc("roll_dice", { p_label: label, p_spec: spec, p_modifier: modifier }));
+    return legacy
+      ? q(sb.rpc("roll_dice", { p_label: label, p_spec: spec, p_modifier: modifier }))
+      : q(sb.rpc("roll_dice", { p_campaign: cid(), p_label: label, p_spec: spec, p_modifier: modifier }));
   },
   // A d20 check with normal / advantage / disadvantage. The
   // database rolls both dice and keeps the right one (roll_check).
@@ -476,23 +581,29 @@ export const dice = {
     };
     if (!sb) { const row = local(); DEMO.rolls.unshift(row); return row; }
     try {
-      return await q(sb.rpc("roll_check", { p_label: label, p_modifier: modifier, p_mode: mode }));
+      return legacy
+        ? await q(sb.rpc("roll_check", { p_label: label, p_modifier: modifier, p_mode: mode }))
+        : await q(sb.rpc("roll_check", { p_campaign: cid(), p_label: label, p_modifier: modifier, p_mode: mode }));
     } catch (e) {
       if (/roll_check|schema cache|does not exist|Could not find/i.test(e.message || "")) return { ...local(), local: true };
       throw e;
     }
   },
-  // Live feed: cb fires whenever ANYONE at the table rolls.
+  // Live feed: cb fires whenever anyone in THIS campaign rolls.
+  // RLS already limits the stream to the caller's campaigns, and we
+  // also filter by the current campaign so a DM watching one table
+  // doesn't see another of their own campaigns' rolls.
   onRoll: (cb, statusCb) => {
     if (!sb) return () => {};
+    const here = campaignId;
     const ch = sb
-      .channel("rolls-feed")
-      .on("postgres_changes", { event: "INSERT", schema: "public", table: "rolls" }, (p) => cb(p.new))
+      .channel("rolls-feed-" + here)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "rolls", filter: `campaign_id=eq.${here}` }, (p) => cb(p.new))
       .subscribe((status) => statusCb && statusCb(status));
     return () => { try { sb.removeChannel(ch); } catch {} };
   },
   presets: {
-    list: async () => (sb ? q(sb.from("roll_presets").select("*").order("created_at")) : [...DEMO.presets]),
+    list: async () => (sb ? q(scope(sb.from("roll_presets").select("*")).order("created_at")) : [...DEMO.presets]),
     save: async (row) => {
       if (!sb) {
         if (row.id) Object.assign(DEMO.presets.find((p) => p.id === row.id), row);
@@ -500,7 +611,7 @@ export const dice = {
         return;
       }
       if (row.id) await q(sb.from("roll_presets").update({ name: row.name, spec: row.spec, modifier: row.modifier }).eq("id", row.id));
-      else await q(sb.from("roll_presets").insert(row));
+      else await q(sb.from("roll_presets").insert(stamp(row)));
     },
     remove: async (id) => {
       if (!sb) return (DEMO.presets = DEMO.presets.filter((p) => p.id !== id));
@@ -525,13 +636,27 @@ const missingTable = (e) => /does not exist|relation|schema cache|Could not find
 
 export const characters = {
   mode: () => (!sb ? "demo" : charMode === "local" ? "local" : "real"),
+  // The characters IN the current campaign — its party. Characters are
+  // owned by their player (portable across campaigns) and appear here
+  // once linked into this campaign (campaign_characters).
   list: async () => {
-    if (!sb) return [...DEMO.characters];
+    if (!sb) {
+      const ids = new Set(DEMO.campaignCharacters.filter((l) => l.campaign_id === campaignId).map((l) => l.character_id));
+      return DEMO.characters.filter((c) => ids.has(c.id));
+    }
     if (charMode !== "local") {
       try {
-        const rows = await q(sb.from("characters").select("*").order("updated_at", { ascending: false }));
+        // legacy (no multi-campaign yet): the whole DB is one table's party
+        if (legacy) {
+          const rows = await q(sb.from("characters").select("*").order("updated_at", { ascending: false }));
+          charMode = "db";
+          return rows;
+        }
+        const rows = await q(
+          sb.from("campaign_characters").select("character:characters(*)").eq("campaign_id", cid())
+        );
         charMode = "db";
-        return rows;
+        return rows.map((r) => r.character).filter(Boolean).sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
       } catch (e) {
         if (!missingTable(e)) throw e;
         charMode = "local";
@@ -539,8 +664,32 @@ export const characters = {
     }
     return lsChars().sort((a, b) => (a.updated_at < b.updated_at ? 1 : -1));
   },
+  // every character the signed-in player owns, across all campaigns —
+  // the pool they pick from when adding an existing hero to a campaign.
+  mine: async (email) => {
+    if (!sb) return DEMO.characters.filter((c) => c.owner_email?.toLowerCase() === String(email).toLowerCase());
+    if (charMode === "local") return lsChars();
+    try { return await q(sb.from("characters").select("*").ilike("owner_email", email).order("updated_at", { ascending: false })); }
+    catch (e) { if (!missingTable(e)) throw e; charMode = "local"; return lsChars(); }
+  },
+  // add / remove one of a player's characters to the current campaign
+  linkToCampaign: async (characterId) => {
+    if (!sb) {
+      if (!DEMO.campaignCharacters.some((l) => l.campaign_id === campaignId && l.character_id === characterId))
+        DEMO.campaignCharacters.push({ campaign_id: campaignId, character_id: characterId });
+      return;
+    }
+    if (charMode === "local" || legacy || !campaignId) return;
+    await q(sb.from("campaign_characters").upsert({ campaign_id: cid(), character_id: characterId }));
+  },
+  unlinkFromCampaign: async (characterId) => {
+    if (!sb) { DEMO.campaignCharacters = DEMO.campaignCharacters.filter((l) => !(l.campaign_id === campaignId && l.character_id === characterId)); return; }
+    if (charMode === "local" || legacy || !campaignId) return;
+    await q(sb.from("campaign_characters").delete().eq("campaign_id", cid()).eq("character_id", characterId));
+  },
   // row: {id?, name, sheet}; ownerEmail is used in demo/local modes
   // (in real mode the DATABASE stamps the owner via my_email()).
+  // A brand-new character is auto-linked into the current campaign.
   save: async (row, ownerEmail) => {
     const stamp = new Date().toISOString();
     if (!sb) {
@@ -548,6 +697,7 @@ export const characters = {
       if (ex) { Object.assign(ex, { name: row.name, sheet: row.sheet, updated_at: stamp }); return ex; }
       const fresh = { id: uid(), owner_email: ownerEmail || "dm@example.com", name: row.name, sheet: row.sheet, created_at: stamp, updated_at: stamp };
       DEMO.characters.unshift(fresh);
+      DEMO.campaignCharacters.push({ campaign_id: campaignId, character_id: fresh.id });
       return fresh;
     }
     const saveLocal = () => {
@@ -566,7 +716,10 @@ export const characters = {
     try {
       if (row.id)
         return await q(sb.from("characters").update({ name: row.name, sheet: row.sheet }).eq("id", row.id).select().single());
-      return await q(sb.from("characters").insert({ name: row.name, sheet: row.sheet }).select().single());
+      const created = await q(sb.from("characters").insert({ name: row.name, sheet: row.sheet }).select().single());
+      // a new hero joins the current campaign's party
+      if (campaignId) { try { await q(sb.from("campaign_characters").upsert({ campaign_id: campaignId, character_id: created.id })); } catch {} }
+      return created;
     } catch (e) {
       if (!missingTable(e)) throw e;
       charMode = "local";
@@ -594,8 +747,10 @@ export const characters = {
     const parked = lsChars();
     if (!parked.length) return 0;
     try {
-      for (const row of parked)
-        await q(sb.from("characters").insert({ name: row.name, sheet: row.sheet }).select().single());
+      for (const row of parked) {
+        const created = await q(sb.from("characters").insert({ name: row.name, sheet: row.sheet }).select().single());
+        if (campaignId) { try { await q(sb.from("campaign_characters").upsert({ campaign_id: campaignId, character_id: created.id })); } catch {} }
+      }
     } catch (e) {
       if (missingTable(e)) { charMode = "local"; return 0; }
       throw e;
@@ -613,12 +768,12 @@ export const characters = {
 export const vtt = {
   encounters: {
     list: async () =>
-      sb ? q(sb.from("encounters").select("*").order("created_at", { ascending: false })) : [...DEMO.encounters],
+      sb ? q(scope(sb.from("encounters").select("*")).order("created_at", { ascending: false })) : DEMO.encounters.filter(inCampaign),
     save: async (row) => {
       if (!sb) {
         const ex = row.id && DEMO.encounters.find((e) => e.id === row.id);
         if (ex) { Object.assign(ex, row); return ex; }
-        const fresh = { grid: { cell: 70, feet: 5, show: true }, active: false, ...row, id: uid(), created_at: new Date().toISOString() };
+        const fresh = { grid: { cell: 70, feet: 5, show: true }, active: false, ...row, id: uid(), campaign_id: campaignId, created_at: new Date().toISOString() };
         DEMO.encounters.unshift(fresh);
         return fresh;
       }
@@ -626,7 +781,7 @@ export const vtt = {
         const { id, ...fields } = row;
         return q(sb.from("encounters").update(fields).eq("id", id).select().single());
       }
-      return q(sb.from("encounters").insert(row).select().single());
+      return q(sb.from("encounters").insert(stamp(row)).select().single());
     },
     remove: async (id) => {
       if (!sb) {
@@ -636,10 +791,10 @@ export const vtt = {
       }
       await q(sb.from("encounters").delete().eq("id", id));
     },
-    // exactly one battle is "live" for the whole table
+    // exactly one battle is "live" per campaign
     setActive: async (id) => {
-      if (!sb) return DEMO.encounters.forEach((e) => (e.active = e.id === id));
-      await q(sb.from("encounters").update({ active: false }).eq("active", true));
+      if (!sb) return DEMO.encounters.filter(inCampaign).forEach((e) => (e.active = e.id === id));
+      await q(scope(sb.from("encounters").update({ active: false })).eq("active", true));
       if (id) await q(sb.from("encounters").update({ active: true }).eq("id", id));
     },
   },
@@ -650,11 +805,11 @@ export const vtt = {
         : DEMO.tokens.filter((t) => t.encounter_id === encounterId),
     add: async (row) => {
       if (!sb) {
-        const fresh = { x: 2, y: 2, size: 1, color: "", conditions: [], hidden: false, monster_index: "", character_id: null, hp_current: null, hp_max: null, initiative: null, ...row, id: uid(), created_at: new Date().toISOString() };
+        const fresh = { x: 2, y: 2, size: 1, color: "", conditions: [], hidden: false, monster_index: "", character_id: null, hp_current: null, hp_max: null, initiative: null, ...row, id: uid(), campaign_id: campaignId, created_at: new Date().toISOString() };
         DEMO.tokens.push(fresh);
         return fresh;
       }
-      return q(sb.from("tokens").insert(row).select().single());
+      return q(sb.from("tokens").insert(stamp(row)).select().single());
     },
     update: async (id, fields) => {
       if (!sb) return Object.assign(DEMO.tokens.find((t) => t.id === id) || {}, fields);
@@ -664,23 +819,28 @@ export const vtt = {
       if (!sb) return (DEMO.tokens = DEMO.tokens.filter((t) => t.id !== id));
       await q(sb.from("tokens").delete().eq("id", id));
     },
-    // fires on ANY token/encounter change; the page decides relevance
+    // fires on token/encounter changes IN THIS CAMPAIGN. RLS already
+    // limits the stream to the caller's campaigns; the campaign_id
+    // filter keeps a DM's other campaigns off this battle map.
     onChange: (cb, statusCb) => {
       if (!sb) return () => {};
+      const here = campaignId;
       const ch = sb
-        .channel("vtt-sync")
-        .on("postgres_changes", { event: "*", schema: "public", table: "tokens" }, (p) => cb({ table: "tokens", type: p.eventType, new: p.new, old: p.old }))
-        .on("postgres_changes", { event: "*", schema: "public", table: "encounters" }, (p) => cb({ table: "encounters", type: p.eventType, new: p.new, old: p.old }))
+        .channel("vtt-sync-" + here)
+        .on("postgres_changes", { event: "*", schema: "public", table: "tokens", filter: `campaign_id=eq.${here}` }, (p) => cb({ table: "tokens", type: p.eventType, new: p.new, old: p.old }))
+        .on("postgres_changes", { event: "*", schema: "public", table: "encounters", filter: `campaign_id=eq.${here}` }, (p) => cb({ table: "encounters", type: p.eventType, new: p.new, old: p.old }))
         .subscribe((status) => statusCb && statusCb(status));
       return () => { try { sb.removeChannel(ch); } catch {} };
     },
   },
-  // ephemeral spell/effect animations, broadcast to every open map
+  // ephemeral spell/effect animations, broadcast to every open map IN
+  // THIS CAMPAIGN (the channel name is campaign-specific, so another
+  // campaign's battle never receives them).
   fx: {
     join: (onFx) => {
       if (!sb) return { send: (p) => { try { onFx(p); } catch {} }, leave: () => {} };
       const ch = sb
-        .channel("vtt-fx", { config: { broadcast: { self: true } } })
+        .channel("vtt-fx-" + campaignId, { config: { broadcast: { self: true } } })
         .on("broadcast", { event: "fx" }, (msg) => { try { onFx(msg.payload); } catch {} })
         .subscribe();
       return {
@@ -693,10 +853,10 @@ export const vtt = {
 
 /* ═══ Party roster (links to D&D Beyond) ═══ */
 export const party = {
-  list: async () => (sb ? q(sb.from("party_characters").select("*").order("created_at")) : [...DEMO.party]),
+  list: async () => (sb ? q(scope(sb.from("party_characters").select("*")).order("created_at")) : DEMO.party.filter(inCampaign)),
   add: async (row) => {
-    if (!sb) return DEMO.party.push({ ...row, id: uid(), created_at: new Date().toISOString() });
-    await q(sb.from("party_characters").insert(row));
+    if (!sb) return DEMO.party.push({ ...row, id: uid(), campaign_id: campaignId, created_at: new Date().toISOString() });
+    await q(sb.from("party_characters").insert(stamp(row)));
   },
   remove: async (id) => {
     if (!sb) return (DEMO.party = DEMO.party.filter((p) => p.id !== id));
