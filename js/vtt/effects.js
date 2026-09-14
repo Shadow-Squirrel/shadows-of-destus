@@ -108,6 +108,7 @@ export function createFx(canvas, view) {
   const ctx = fxCtx;                        // the live draw context (always the fx canvas)
   let glow = null;                          // Pixi additive-overlay layer (or null)
   let webgl = false;                        // GPU enhancement active?
+  let vol = null;                           // raw-WebGL2 volumetric layer (no CDN; or null)
 
   let effects = [];   // {stages:[...], t0, from, to, palette}
   let particles = []; // pseudo-3D motes: {grid,vx,vy,z,vz,zg,drag,gravity,born,life,size,palette,…}
@@ -151,12 +152,30 @@ export function createFx(canvas, view) {
   function fxDestroy() {
     effects = []; particles = []; running = false;
     try { glow?.destroy(); } catch { /* fine */ }
-    glow = null; webgl = false;
+    try { vol?.destroy(); } catch { /* fine */ }
+    glow = null; webgl = false; vol = null;
     try { domWatch?.disconnect(); } catch { /* fine */ }
     domWatch = null;
   }
 
+  /* Bring up the raw-WebGL2 volumetric layer (no CDN → always available where
+     WebGL2 is). Independent of the Pixi bloom layer above; purely additive, so
+     any failure just means no volumetric enhancement — the 2-D art still plays. */
+  async function initVol() {
+    if (force2d || vol || !wrap) return;
+    try {
+      const mod = await import("./fx-gl2.js");
+      if (!mod.webgl2Available()) return;
+      vol = mod.createVolLayer(canvas, wrap, { view });
+      try { console.info("[Onyx FX] volumetric layer active (WebGL2)"); } catch { /* fine */ }
+      if ((effects.length || particles.length) && !running) { running = true; requestAnimationFrame(frame); }
+    } catch (e) {
+      try { console.info("[Onyx FX] volumetric layer unavailable:", e && e.message); } catch { /* fine */ }
+    }
+  }
+
   initWebgl();
+  initVol();
 
   function spawnParticles(n, originGrid, opts) {
     // The 2-D particle system (dense additive glow/ember motes, pseudo-3D z-arc
@@ -528,6 +547,22 @@ export function createFx(canvas, view) {
         spawnParticles(2, pxToGridApprox({ x, y }), {
           speed: [1, 5], life: [200, 450], size: [2, 4], palette: eff.palette, drag: 0.9,
         });
+    },
+    // volumetric fire/energy blast — raw-WebGL2 overlay, purely additive over
+    // the 2-D art. If WebGL2 is unavailable `vol` is null and the burst beneath
+    // carries the effect. Respects the effect palette so it serves every school
+    // (fire, cold, radiant, necrotic, force…), not just fire.
+    vfire(s, t, eff) {
+      if (!vol) return;
+      const c = P(s.at === "from" ? eff.from : eff.to);
+      const R = F(s.radiusFt ?? 20) * (s.scale ?? 1);
+      const p = eff.palette || {};
+      vol.fire(c.x, c.y, R, t, {
+        colHot: s.colHot || p.core,
+        colCool: s.colCool || p.mid,
+        spanSec: s.spanSec ?? 1.5,
+        spread: s.spread ?? 1.5,
+      });
     },
     burst(s, t, eff) {
       const c = P(s.at === "from" ? eff.from : eff.to);
@@ -1228,6 +1263,9 @@ export function createFx(canvas, view) {
     // fxCanvas on layout / window-zoom / DPR changes). resize() is idempotent.
     if (webgl && glow) { try { glow.resize(canvas.width, canvas.height); } catch { /* fine */ } }
     const W = ctx.canvas.width, H = ctx.canvas.height;
+    // volumetric layer: match size + clear for a fresh additive frame. vfire
+    // stages draw into it below; a frame with no vfire clears it to nothing.
+    if (vol) { try { vol.resize(W, H); vol.beginFrame(); } catch { /* fine */ } }
 
     // fx-canvas fallback shake: a decaying random offset that settles to 0
     let sdx = 0, sdy = 0;
@@ -1320,6 +1358,7 @@ export function createFx(canvas, view) {
     /* ── fire ── */
     "fireball": () => [
       A({ type: "projectile", dur: 480, size: 10, arc: 0.35 }),
+      A({ type: "vfire", delay: 470, dur: 1300, radiusFt: 20 }),   // volumetric blaze
       A({ type: "burst", delay: 480, dur: 700, radiusFt: 20, particles: 90, embers: true }),
       A({ type: "burst", delay: 560, dur: 500, radiusFt: 10, scale: 0.7 }),
       A({ type: "ring", delay: 480, dur: 600, radiusFt: 20, expand: true }),
@@ -1328,22 +1367,29 @@ export function createFx(canvas, view) {
     "delayed-blast-fireball": (sp) => [
       A({ type: "ring", dur: 1400, radiusFt: sz(sp, 20), linger: true, dashed: true }),
       A({ type: "orbit", dur: 1400, radiusFt: 4, count: 5, turns: 3 }),
+      A({ type: "vfire", delay: 1190, dur: 1300, radiusFt: sz(sp, 20) }),
       A({ type: "burst", delay: 1200, dur: 800, radiusFt: sz(sp, 20), particles: 100, embers: true }),
       A({ type: "ring", delay: 1200, dur: 700, radiusFt: sz(sp, 20), expand: true }),
     ],
     "fire-bolt": () => [
       A({ type: "projectile", dur: 420, size: 8, arc: 0.28 }),
+      A({ type: "vfire", delay: 415, dur: 650, radiusFt: 4, spanSec: 1.1 }),
       A({ type: "burst", delay: 420, dur: 420, radiusFt: 4, particles: 22, embers: true }),
     ],
     "scorching-ray": () => [0, 130, 260].map((d) =>
       A({ type: "projectile", delay: d, dur: 380, size: 7, arc: 0.18 })
-    ).concat([A({ type: "burst", delay: 600, dur: 450, radiusFt: 5, particles: 28, embers: true })]),
+    ).concat([
+      A({ type: "vfire", delay: 595, dur: 650, radiusFt: 5, spanSec: 1.1 }),
+      A({ type: "burst", delay: 600, dur: 450, radiusFt: 5, particles: 28, embers: true }),
+    ]),
     "produce-flame": () => [
       A({ type: "projectile", dur: 480, size: 7, arc: 0.4 }),
+      A({ type: "vfire", delay: 475, dur: 560, radiusFt: 3, spanSec: 1.0 }),
       A({ type: "burst", delay: 480, dur: 380, radiusFt: 3, particles: 16, embers: true }),
     ],
     "flaming-sphere": () => [
       A({ type: "rollball", dur: 1100, radiusFt: 4 }),
+      A({ type: "vfire", delay: 895, dur: 720, radiusFt: 5, spanSec: 1.2 }),
       A({ type: "burst", delay: 900, dur: 500, radiusFt: 5, particles: 24, embers: true }),
     ],
     "wall-of-fire": (sp) => [
@@ -1353,16 +1399,19 @@ export function createFx(canvas, view) {
     "fire-storm": (sp) => [0, 130, 260, 390].map((d) =>
       A({ type: "column", delay: d, dur: 500, heightFt: 40, widthFt: 8 })
     ).concat([
+      A({ type: "vfire", delay: 195, dur: 1200, radiusFt: sz(sp, 30) / 2 }),
       A({ type: "burst", delay: 200, dur: 800, radiusFt: sz(sp, 30) / 2, particles: 90, embers: true }),
       A({ type: "ring", delay: 200, dur: 700, radiusFt: sz(sp, 30) / 2, expand: true }),
     ]),
     "flame-strike": (sp) => [
       A({ type: "column", dur: 1000, heightFt: 45, widthFt: 12 }),
       A({ type: "rays", delay: 100, dur: 700, radiusFt: 14, count: 10 }),
+      A({ type: "vfire", delay: 245, dur: 1200, radiusFt: sz(sp, 20) }),
       A({ type: "burst", delay: 250, dur: 700, radiusFt: sz(sp, 20), particles: 70, embers: true }),
       A({ type: "ring", delay: 250, dur: 700, radiusFt: sz(sp, 20), expand: true }),
     ],
     "hellish-rebuke": () => [
+      A({ type: "vfire", delay: 0, dur: 820, radiusFt: 7, spanSec: 1.2 }),
       A({ type: "burst", dur: 650, radiusFt: 7, particles: 44, embers: true }),
       A({ type: "column", delay: 60, dur: 600, heightFt: 24, widthFt: 10 }),
     ],
@@ -1382,6 +1431,7 @@ export function createFx(canvas, view) {
     "meteor-swarm": (sp) => [0, 220, 440, 660].map((d) =>
       A({ type: "projectile", delay: d, dur: 500, size: 14, arc: 1.4 })
     ).concat([
+      A({ type: "vfire", delay: 890, dur: 1600, radiusFt: sz(sp, 40) }),
       A({ type: "burst", delay: 900, dur: 900, radiusFt: sz(sp, 40), particles: 120, embers: true }),
       A({ type: "ring", delay: 900, dur: 800, radiusFt: sz(sp, 40), expand: true }),
       A({ type: "ring", delay: 1700, dur: 3600, radiusFt: sz(sp, 40), linger: true, dashed: true }),
@@ -1929,6 +1979,7 @@ export function createFx(canvas, view) {
     clear() {
       effects = []; particles = [];
       try { glow?.clear?.(); } catch { /* fine */ }
+      try { vol?.clear?.(); } catch { /* fine */ }
       // wipe the offscreen so a stale frame doesn't linger under the GL layer
       try {
         ctx.setTransform(1, 0, 0, 1, 0, 0);
