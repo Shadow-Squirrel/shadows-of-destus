@@ -3,7 +3,17 @@
 // receive revealed maps (the database and storage both enforce
 // it) — the DM sees everything and flips reveal with one click.
 import { boot, esc, guard, fmtDate, toast } from "../shell.js";
-import { maps } from "../db.js";
+import { maps, ai, getCampaign, isReal } from "../db.js";
+
+// Style presets: each appends flavor to the DM's prompt so a couple
+// of words ("goblin cave") become a usable battle map.
+const MAP_STYLES = [
+  ["Top-down battle map", "top-down tactical battle map, grid-friendly, high detail, fantasy RPG"],
+  ["Dungeon", "top-down dungeon battle map, stone corridors and rooms, torchlit, fantasy RPG"],
+  ["Wilderness", "top-down wilderness battle map, forest clearing and trails, natural terrain, fantasy RPG"],
+  ["Town / interior", "top-down building interior battle map, rooms and furniture, fantasy tavern or hall"],
+  ["Region map", "hand-drawn fantasy region map, coastline forests and towns, parchment cartography style"],
+];
 
 const CATS = [
   ["world", "World", "gold"],
@@ -34,6 +44,7 @@ async function main() {
         ${ctx.me.isDM ? '<button class="btn" id="new-m">+ Add map</button>' : ""}
       </div>
       ${ctx.me.isDM ? `<p class="muted small" style="margin-top:-6px">Maps marked 🕯️ are invisible to players until you hit <strong>Reveal</strong>.</p>` : ""}
+      ${ctx.me.isDM ? `<div id="ai-slot"></div>` : ""}
       <div id="new-slot"></div>
       <div class="grid" id="grid" style="grid-template-columns:repeat(auto-fill, minmax(340px, 1fr))"></div>`;
 
@@ -43,6 +54,82 @@ async function main() {
 
     const nb = root.querySelector("#new-m");
     if (nb) nb.onclick = () => { root.querySelector("#new-slot").replaceChildren(mapForm()); nb.disabled = true; };
+
+    if (ctx.me.isDM) renderAi();
+  }
+
+  /* ── ✨ Generate a battle map with AI (DM only) ──
+     Wrapped so a missing/unconfigured function NEVER breaks the page. */
+  async function renderAi() {
+    const slot = root.querySelector("#ai-slot");
+    if (!slot) return;
+    // demo mode can't store images — offer nothing rather than a broken button
+    if (!isReal()) return;
+
+    let usage = null;
+    try { usage = await ai.usage(); } catch { usage = null; }
+
+    // usage === null ⇒ the AI migration/function isn't set up yet
+    if (!usage) {
+      slot.innerHTML = `
+        <div class="card ai-card">
+          <div class="row" style="justify-content:space-between; align-items:center">
+            <strong>✨ Generate a map with AI</strong>
+            <span class="pill mystic">not set up</span>
+          </div>
+          <p class="muted small" style="margin:6px 0 0">AI images aren't set up yet.
+            Deploy the <code>generate-image</code> function and set a provider key —
+            see <code>docs/AI-IMAGES.md</code>.</p>
+        </div>`;
+      return;
+    }
+
+    const left = usage.remaining ?? 0;
+    slot.innerHTML = `
+      <div class="card ai-card">
+        <div class="row" style="justify-content:space-between; align-items:center">
+          <strong>✨ Generate a battle map with AI</strong>
+          <span class="pill ${left > 0 ? "moss" : "ember"}" title="Resets at the start of each month">${left} of ${usage.cap ?? "?"} left this month</span>
+        </div>
+        <p class="muted small" style="margin:6px 0 8px">Describe the scene; FLUX.1 [schnell] draws it. New maps arrive <strong>hidden</strong> — reveal when you're ready. Failed generations don't count against your quota.</p>
+        <div class="row ai-styles" style="gap:6px; flex-wrap:wrap; margin-bottom:8px">
+          ${MAP_STYLES.map(([label], i) => `<button type="button" class="btn-ghost ai-style" data-i="${i}" style="padding:4px 10px">${esc(label)}</button>`).join("")}
+        </div>
+        <textarea id="ai-prompt" style="min-height:64px" placeholder="e.g. a ruined watchtower on a foggy marsh, broken bridge, reeds"></textarea>
+        <div class="actions">
+          <button class="btn" id="ai-go" ${left > 0 ? "" : "disabled"}>${left > 0 ? "✨ Generate map" : "Monthly limit reached"}</button>
+          <span class="muted small" id="ai-msg"></span>
+        </div>
+      </div>`;
+
+    let stylePrefix = "";
+    slot.querySelectorAll(".ai-style").forEach((b) => (b.onclick = () => {
+      stylePrefix = MAP_STYLES[+b.dataset.i][1];
+      slot.querySelectorAll(".ai-style").forEach((x) => x.classList.remove("active"));
+      b.classList.add("active");
+      slot.querySelector("#ai-prompt").focus();
+    }));
+
+    slot.querySelector("#ai-go").onclick = () => {
+      const raw = slot.querySelector("#ai-prompt").value.trim();
+      if (!raw) { toast("Describe the map first"); return; }
+      const prompt = stylePrefix ? `${stylePrefix}: ${raw}` : raw;
+      const go = slot.querySelector("#ai-go");
+      go.disabled = true;
+      slot.querySelector("#ai-msg").textContent = "Summoning pixels… (a few seconds)";
+      guard(async () => {
+        try {
+          await ai.generate({ campaignId: getCampaign(), kind: "map", prompt });
+          toast("Map generated — it's hidden until you reveal it");
+          await render(); // list now includes the new (hidden) map
+        } catch (e) {
+          if (e.code === "not-configured") { renderAi(); toast("AI images aren't set up yet — see docs/AI-IMAGES.md"); return; }
+          go.disabled = false;
+          slot.querySelector("#ai-msg").textContent = "";
+          toast("⚠ " + (e.message || "Generation failed"));
+        }
+      });
+    };
   }
 
   function mapCard(m, urls) {

@@ -746,4 +746,168 @@ revoke execute on function roll_check(uuid, text, int, text) from public, anon;
 grant execute on function roll_check(uuid, text, int, text) to authenticated;
 drop function if exists roll_check(text, int, text);
 
+-- ═════════════════════════════════════════════════════════════
+--  AI image generation — cost-safe by construction.
+--  (mirrors supabase/migrations/20260916130000_ai_images.sql;
+--   see docs/AI-IMAGES.md. Safe to run more than once.)
+--
+--  The money-critical caps are enforced HERE, atomically, before
+--  any paid provider call: a per-DM/month cap and a global/month
+--  cap in ai_image_config; every attempt logged in ai_image_log;
+--  ai_reserve_image() counts-and-inserts under a per-month
+--  advisory lock so concurrent calls can't exceed the cap; a
+--  'failed' row never counts against quota. The ultimate ceiling
+--  is the PREPAID CREDIT the owner sets at the provider.
+-- ═════════════════════════════════════════════════════════════
+
+create table if not exists ai_image_config (
+  id boolean primary key default true,
+  per_dm_monthly_cap  int not null default 50,
+  global_monthly_cap  int not null default 5000,
+  updated_at timestamptz not null default now(),
+  constraint ai_image_config_singleton check (id = true)
+);
+insert into ai_image_config (id) values (true) on conflict (id) do nothing;
+alter table ai_image_config enable row level security;
+drop policy if exists "ai config: readable" on ai_image_config;
+create policy "ai config: readable" on ai_image_config
+  for select to authenticated using (true);
+
+create table if not exists ai_image_log (
+  id uuid primary key default gen_random_uuid(),
+  campaign_id  uuid not null references campaigns(id) on delete cascade,
+  dm_email     text not null,
+  ym           text not null,
+  kind         text not null check (kind in ('map','portrait')),
+  prompt       text not null default '',
+  storage_path text,
+  status       text not null default 'pending' check (status in ('pending','done','failed')),
+  created_at   timestamptz not null default now()
+);
+create index if not exists ai_image_log_dm_ym_live_idx
+  on ai_image_log (dm_email, ym) where status <> 'failed';
+create index if not exists ai_image_log_ym_live_idx
+  on ai_image_log (ym) where status <> 'failed';
+create index if not exists ai_image_log_campaign_idx on ai_image_log (campaign_id);
+alter table ai_image_log enable row level security;
+drop policy if exists "ai log: members read" on ai_image_log;
+create policy "ai log: members read" on ai_image_log
+  for select to authenticated using (is_campaign_member(campaign_id));
+
+create or replace function ai_reserve_image(p_campaign uuid, p_kind text, p_prompt text)
+returns uuid
+language plpgsql security definer set search_path = public as $$
+declare
+  v_ym          text := to_char(now() at time zone 'utc', 'YYYY-MM');
+  v_email       text := my_email();
+  v_per_dm      int;
+  v_global      int;
+  v_dm_count    int;
+  v_global_cnt  int;
+  v_id          uuid;
+begin
+  if v_email = '' then raise exception 'Must be signed in'; end if;
+  if not is_campaign_dm(p_campaign) then
+    raise exception 'Only a DM of this campaign can generate images';
+  end if;
+  if p_kind not in ('map','portrait') then
+    raise exception 'Unknown image kind';
+  end if;
+  perform pg_advisory_xact_lock(hashtextextended('ai_image_reserve:' || v_ym, 0));
+  select per_dm_monthly_cap, global_monthly_cap
+    into v_per_dm, v_global
+    from ai_image_config where id = true;
+  if v_per_dm is null or v_global is null then
+    raise exception 'AI image budget is not configured';
+  end if;
+  select count(*) into v_dm_count
+    from ai_image_log
+   where dm_email = v_email and ym = v_ym and status <> 'failed';
+  if v_dm_count >= v_per_dm then
+    raise exception 'DM monthly limit reached';
+  end if;
+  select count(*) into v_global_cnt
+    from ai_image_log
+   where ym = v_ym and status <> 'failed';
+  if v_global_cnt >= v_global then
+    raise exception 'Global monthly AI budget reached';
+  end if;
+  insert into ai_image_log (campaign_id, dm_email, ym, kind, prompt, status)
+    values (p_campaign, v_email, v_ym, p_kind, left(coalesce(p_prompt, ''), 2000), 'pending')
+    returning id into v_id;
+  return v_id;
+end $$;
+revoke execute on function ai_reserve_image(uuid, text, text) from public, anon;
+grant  execute on function ai_reserve_image(uuid, text, text) to authenticated, service_role;
+
+create or replace function ai_complete_image(p_id uuid, p_path text)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update ai_image_log
+     set status = 'done', storage_path = p_path
+   where id = p_id and status = 'pending'
+     and (dm_email = my_email() or auth.role() = 'service_role');
+  if not found then
+    raise exception 'Reservation not found, not yours, or already finalized';
+  end if;
+end $$;
+revoke execute on function ai_complete_image(uuid, text) from public, anon;
+grant  execute on function ai_complete_image(uuid, text) to authenticated, service_role;
+
+create or replace function ai_fail_image(p_id uuid)
+returns void language plpgsql security definer set search_path = public as $$
+begin
+  update ai_image_log
+     set status = 'failed'
+   where id = p_id and status = 'pending'
+     and (dm_email = my_email() or auth.role() = 'service_role');
+end $$;
+revoke execute on function ai_fail_image(uuid) from public, anon;
+grant  execute on function ai_fail_image(uuid) to authenticated, service_role;
+
+create or replace function ai_usage()
+returns jsonb language plpgsql stable security definer set search_path = public as $$
+declare
+  v_ym    text := to_char(now() at time zone 'utc', 'YYYY-MM');
+  v_email text := my_email();
+  v_per   int;
+  v_glob  int;
+  v_used  int;
+  v_gused int;
+begin
+  select per_dm_monthly_cap, global_monthly_cap into v_per, v_glob
+    from ai_image_config where id = true;
+  select count(*) into v_used  from ai_image_log
+    where dm_email = v_email and ym = v_ym and status <> 'failed';
+  select count(*) into v_gused from ai_image_log
+    where ym = v_ym and status <> 'failed';
+  return jsonb_build_object(
+    'ym', v_ym, 'used', v_used, 'cap', v_per,
+    'remaining', greatest(0, coalesce(v_per, 0) - v_used),
+    'global_used', v_gused, 'global_cap', v_glob);
+end $$;
+revoke execute on function ai_usage() from public, anon;
+grant  execute on function ai_usage() to authenticated, service_role;
+
+insert into storage.buckets (id, name, public)
+values ('ai-art', 'ai-art', false)
+on conflict (id) do nothing;
+update storage.buckets
+   set file_size_limit = 10485760,
+       allowed_mime_types = array['image/jpeg','image/png','image/webp']
+ where id = 'ai-art';
+
+create or replace function can_read_ai_art(p text) returns boolean
+language plpgsql stable security definer set search_path = public as $$
+declare seg text := split_part(p, '/', 1); cid uuid;
+begin
+  begin cid := seg::uuid; exception when others then return false; end;
+  return is_campaign_member(cid);
+end $$;
+
+drop policy if exists "ai-art: members read own campaign" on storage.objects;
+create policy "ai-art: members read own campaign" on storage.objects
+  for select to authenticated
+  using (bucket_id = 'ai-art' and can_read_ai_art(name));
+
 

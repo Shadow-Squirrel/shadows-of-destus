@@ -7,6 +7,7 @@
 //  chips show what's left.
 // ─────────────────────────────────────────────────────────────
 import { esc, md, guard, toast } from "../../shell.js";
+import { ai, getCampaign, isReal } from "../../db.js";
 import {
   derive, eligibleSpells, pendingChoices, finalAbilities, fmtMod,
   STANDARD_ARRAY, POINT_BUY_BUDGET, POINT_BUY_COST, pointBuySpent,
@@ -19,7 +20,7 @@ import { SPELLS } from "../../dnd/data/spells.js";
 import { WEAPONS, ARMOR, GEAR, PACKS } from "../../dnd/data/equipment.js";
 import { BACKGROUNDS } from "../../dnd/data/backgrounds.js";
 import { FEATS } from "../../dnd/data/feats.js";
-import { cap, ordinal, statTile, spellMetaLine, spellTags, spellText } from "./common.js";
+import { cap, ordinal, statTile, spellMetaLine, spellTags, spellText, openModal } from "./common.js";
 
 /* ── tiny pure helpers ── */
 const STEP_LABELS = {
@@ -1307,6 +1308,14 @@ export function renderBuilder(root, ctx, opts) {
         <label class="field">Table notes</label>
         <textarea id="dt-notes" style="min-height:56px" placeholder="Anything else — house rules, reminders…">${esc(draft.notes || "")}</textarea>
       </div>
+      ${ctx.me.isDM && isReal() ? `
+      <div class="card ai-card">
+        <h3 class="section">✨ Portrait</h3>
+        <p class="muted small" style="margin-top:-4px">${draft.portrait
+          ? "A portrait is attached — it shows on the sheet. Save to keep it."
+          : "Generate one with AI (FLUX.1 [schnell]). Failed generations don't count against your quota."}</p>
+        <div class="actions" id="dt-portrait-tools"></div>
+      </div>` : ""}
       <div class="card">
         <h3 class="section">Review</h3>
         <p class="char-sub">${esc(`${drv.raceName} ${drv.className}${drv.subclassName ? ` (${drv.subclassName})` : ""} · Level ${drv.level}${drv.backgroundName ? ` · ${drv.backgroundName}` : ""}`)}</p>
@@ -1351,6 +1360,61 @@ export function renderBuilder(root, ctx, opts) {
       sel.value = "";
     }));
     $("#dt-save", body).onclick = doSave;
+
+    // AI portrait (DM only) — sets draft.portrait; the image itself is
+    // shown on the sheet. Guarded so an unset/failed AI state is inert.
+    const ptools = $("#dt-portrait-tools", body);
+    if (ptools) {
+      guard(async () => {
+        let usage = null;
+        try { usage = await ai.usage(); } catch { usage = null; }
+        if (!usage) {
+          ptools.innerHTML = `<span class="muted small">AI images aren't set up yet — see <code>docs/AI-IMAGES.md</code>.</span>`;
+          return;
+        }
+        const left = usage.remaining ?? 0;
+        ptools.innerHTML = `
+          <button class="btn-ghost" id="dt-pgen" ${left > 0 ? "" : "disabled"}>${draft.portrait ? "Regenerate" : "✨ Generate portrait"}</button>
+          ${draft.portrait ? `<button class="btn-ghost" id="dt-prm">Remove</button>` : ""}
+          <span class="muted small">${left} of ${usage.cap ?? "?"} AI images left this month</span>`;
+        const prm = $("#dt-prm", ptools);
+        if (prm) prm.onclick = () => { draft.portrait = null; rerender(); };
+        const pgen = $("#dt-pgen", ptools);
+        if (pgen) pgen.onclick = () => {
+          const prefill = ["fantasy character portrait, head and shoulders",
+            [drv.raceName, drv.className].filter((x) => x && x !== "—").join(" "),
+            (draft.details?.appearance || "").trim()].filter(Boolean).join(", ");
+          const m = openModal(`Portrait for ${esc(draft.name || "your hero")}`, `
+            <textarea id="bp-prompt" style="min-height:90px">${esc(prefill)}</textarea>
+            <div class="actions">
+              <button class="btn" id="bp-go">✨ Generate</button>
+              <button class="btn-ghost" id="bp-cancel">Cancel</button>
+              <span class="muted small" id="bp-msg"></span>
+            </div>`);
+          m.el.querySelector("#bp-cancel").onclick = m.close;
+          m.el.querySelector("#bp-go").onclick = () => {
+            const prompt = m.el.querySelector("#bp-prompt").value.trim();
+            if (!prompt) { toast("Describe the portrait first"); return; }
+            m.el.querySelector("#bp-go").disabled = true;
+            m.el.querySelector("#bp-msg").textContent = "Painting…";
+            guard(async () => {
+              try {
+                const res = await ai.generate({ campaignId: getCampaign(), kind: "portrait", prompt });
+                draft.portrait = res.path;
+                m.close();
+                toast("Portrait generated — save to keep it");
+                rerender();
+              } catch (e) {
+                if (e.code === "not-configured") { m.close(); toast("AI images aren't set up yet — see docs/AI-IMAGES.md"); return; }
+                m.el.querySelector("#bp-go").disabled = false;
+                m.el.querySelector("#bp-msg").textContent = "";
+                toast("⚠ " + (e.message || "Generation failed"));
+              }
+            });
+          };
+        };
+      });
+    }
   }
 
   rerender();

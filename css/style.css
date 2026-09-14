@@ -508,3 +508,23 @@ svg.die.landed { animation: die-land .38s cubic-bezier(.2, 2.1, .4, 1); }
   nav.site a { padding: 8px 11px 10px; font-size: 12.5px; }
   .card { padding: 16px 16px; }
 }
+
+/* ── AI image generation ── */
+.ai-card { margin-bottom: 14px; border-left: 3px solid var(--mystic); }
+.ai-card textarea { width: 100%; }
+.ai-style.active {
+  color: var(--gold); border-color: var(--gold-soft);
+  background: rgba(212,165,49,.10);
+}
+/* character-sheet portrait */
+.portrait-bar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.portrait-img {
+  width: 132px; height: 132px; object-fit: cover;
+  border-radius: var(--radius-sm); border: 1px solid var(--border);
+  box-shadow: var(--sh-2);
+}
+.portrait-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.portrait-note { margin: 0; }
+@media (max-width: 480px) {
+  .portrait-img { width: 96px; height: 96px; }
+}

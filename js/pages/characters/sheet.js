@@ -8,7 +8,7 @@
 //  renderSheet(root, ctx, opts) — see characters.js for opts.
 // ─────────────────────────────────────────────────────────────
 import { esc, md, guard, toast } from "../../shell.js";
-import { dice } from "../../db.js";
+import { dice, ai, getCampaign, isReal } from "../../db.js";
 import {
   derive, eligibleSpells, pendingChoices, levelUpSummary, classInfo,
   fmtMod, parseDice,
@@ -112,6 +112,7 @@ export function renderSheet(root, ctx, opts) {
     }
     const pend = pendingChoices(char, drv);
     root.innerHTML = `
+      <div id="portrait-bar" class="portrait-bar"></div>
       ${headHtml(drv)}
       ${bannerHtml(drv, pend)}
       ${canRoll ? `
@@ -348,6 +349,86 @@ export function renderSheet(root, ctx, opts) {
       root.querySelectorAll("[data-tab]").forEach((x) => { x.className = x.dataset.tab === tab ? "btn" : "btn-ghost"; });
       renderTab();
     });
+    renderPortrait(drv);
+  }
+
+  /* ── AI portrait (view for everyone; generate = DM only) ──
+     Fully guarded so an unset/failed AI state never breaks the sheet. */
+  async function renderPortrait(drv) {
+    const bar = root.querySelector("#portrait-bar");
+    if (!bar) return;
+    const canGen = ctx.me.isDM && isReal();
+
+    let imgHtml = "";
+    if (char.portrait) {
+      try {
+        const urls = await ai.artUrls([char.portrait]);
+        const u = urls[char.portrait];
+        if (u) imgHtml = `<a href="${esc(u)}" target="_blank" rel="noopener" title="Open full size"><img class="portrait-img" src="${esc(u)}" alt="${esc(heroName())}"></a>`;
+      } catch { /* leave imgHtml empty */ }
+    }
+
+    if (!canGen) { bar.innerHTML = imgHtml; return; }
+
+    let usage = null;
+    try { usage = await ai.usage(); } catch { usage = null; }
+
+    if (!usage) {
+      // AI isn't set up yet — a quiet note, only the DM sees it, and
+      // only when there's no portrait to show already.
+      bar.innerHTML = imgHtml || `<p class="muted small portrait-note">✨ AI portraits aren't set up yet — see <code>docs/AI-IMAGES.md</code>.</p>`;
+      return;
+    }
+
+    const left = usage.remaining ?? 0;
+    const label = char.portrait ? "Regenerate" : "✨ Generate portrait";
+    bar.innerHTML = `
+      ${imgHtml}
+      <span class="portrait-tools">
+        <button class="btn-ghost" id="p-gen" ${left > 0 ? "" : "disabled"}>${left > 0 ? label : "Monthly limit reached"}</button>
+        ${char.portrait ? `<button class="btn-ghost" id="p-rm">Remove</button>` : ""}
+        <span class="muted small">${left} of ${usage.cap ?? "?"} AI images left this month</span>
+      </span>`;
+
+    const rm = bar.querySelector("#p-rm");
+    if (rm) rm.onclick = () => { char.portrait = null; save(true); render(); };
+
+    const gen = bar.querySelector("#p-gen");
+    if (gen) gen.onclick = () => {
+      const prefill = ["fantasy character portrait, head and shoulders",
+        [drv.raceName, drv.className].filter((x) => x && x !== "—").join(" "),
+        (char.details?.appearance || "").trim()].filter(Boolean).join(", ");
+      const m = openModal(`Portrait for ${heroName()}`, `
+        <p class="muted small">Describe them; FLUX.1 [schnell] paints it. Failed generations don't count against your quota.</p>
+        <textarea id="pp-prompt" style="min-height:90px">${esc(prefill)}</textarea>
+        <div class="actions">
+          <button class="btn" id="pp-go">✨ Generate</button>
+          <button class="btn-ghost" id="pp-cancel">Cancel</button>
+          <span class="muted small" id="pp-msg"></span>
+        </div>`);
+      m.el.querySelector("#pp-cancel").onclick = m.close;
+      m.el.querySelector("#pp-go").onclick = () => {
+        const prompt = m.el.querySelector("#pp-prompt").value.trim();
+        if (!prompt) { toast("Describe the portrait first"); return; }
+        m.el.querySelector("#pp-go").disabled = true;
+        m.el.querySelector("#pp-msg").textContent = "Painting…";
+        guard(async () => {
+          try {
+            const res = await ai.generate({ campaignId: getCampaign(), kind: "portrait", prompt });
+            char.portrait = res.path;
+            save(true);
+            m.close();
+            toast("Portrait generated");
+            render();
+          } catch (e) {
+            if (e.code === "not-configured") { m.close(); toast("AI images aren't set up yet — see docs/AI-IMAGES.md"); return; }
+            m.el.querySelector("#pp-go").disabled = false;
+            m.el.querySelector("#pp-msg").textContent = "";
+            toast("⚠ " + (e.message || "Generation failed"));
+          }
+        });
+      };
+    };
   }
 
   function renderTab(drv) {

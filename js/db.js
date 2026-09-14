@@ -857,6 +857,71 @@ export const vtt = {
   },
 };
 
+/* ═══ AI image generation ═══
+   Portraits and battle maps from FLUX.1 [schnell], produced by the
+   `generate-image` Edge Function (which alone holds the paid
+   provider key). The browser never calls the provider; it invokes
+   the function with the user's JWT attached. The database enforces
+   the monthly cost caps atomically BEFORE any paid call — see
+   supabase/migrations/…_ai_images.sql and docs/AI-IMAGES.md.
+
+   "Not set up yet" is a first-class state: before the function is
+   deployed / a provider key is set, generate() throws with
+   code "not-configured" and usage() returns null, so the UI can
+   show a calm "set up AI generation" note instead of breaking. */
+const notConfigured = () => Object.assign(new Error("AI images aren't set up yet"), { code: "not-configured" });
+
+export const ai = {
+  // {campaignId, kind:'map'|'portrait', prompt} → {path, url, kind, mapId}
+  // Throws with .code==='not-configured' when AI isn't set up, or with
+  // the database's clean cap message ("DM monthly limit reached", …).
+  generate: async ({ campaignId, kind, prompt }) => {
+    if (!sb) throw new Error("AI generation needs the live database — it isn't available in demo mode.");
+    const cid = campaignId || campaignId === 0 ? campaignId : getCampaign();
+    const { data, error } = await sb.functions.invoke("generate-image", {
+      body: { campaignId: cid, kind, prompt },
+    });
+    if (error) {
+      // supabase-js wraps non-2xx as FunctionsHttpError with a Response
+      // in error.context — read the JSON body for a clean message.
+      let msg = error.message || "Image generation failed";
+      try {
+        const b = await error.context.json();
+        if (b?.error === "not-configured") throw notConfigured();
+        if (b?.error) msg = b.error;
+      } catch (inner) {
+        if (inner?.code === "not-configured") throw inner;
+        // function not deployed at all → treat as "not set up yet"
+        if (/Failed to send|Function not found|404|not found/i.test(msg)) throw notConfigured();
+      }
+      throw new Error(msg);
+    }
+    if (data?.error === "not-configured") throw notConfigured();
+    if (data?.error) throw new Error(data.error);
+    return { path: data?.path, url: data?.url, kind: data?.kind, mapId: data?.mapId ?? null };
+  },
+  // The signed-in DM's usage this month: {ym, used, cap, remaining,
+  // global_used, global_cap} — or null if the AI migration/RPC isn't
+  // present yet (so callers can show the "not set up" note).
+  usage: async () => {
+    if (!sb) return null;
+    try { return await q(sb.rpc("ai_usage")); }
+    catch (e) {
+      if (/does not exist|Could not find|schema cache|function/i.test(e?.message || "")) return null;
+      throw e;
+    }
+  },
+  // signed, short-lived URLs for stored portraits (the 'ai-art' bucket)
+  artUrls: async (paths) => {
+    const wanted = (paths || []).filter(Boolean);
+    if (!sb || !wanted.length) return {};
+    const rows = await q(sb.storage.from("ai-art").createSignedUrls(wanted, 3600));
+    const out = {};
+    rows.forEach((r) => { if (r.signedUrl) out[r.path] = r.signedUrl; });
+    return out;
+  },
+};
+
 /* ═══ Party roster (links to D&D Beyond) ═══ */
 export const party = {
   list: async () => (sb ? q(scope(sb.from("party_characters").select("*")).order("created_at")) : DEMO.party.filter(inCampaign)),

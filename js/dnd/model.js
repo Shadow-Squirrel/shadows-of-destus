@@ -69,6 +69,10 @@ export function newCharacter() {
     customFeatures: [], // [{name, desc}]
     details: { personality: "", ideals: "", bonds: "", flaws: "", backstory: "", appearance: "" },
     notes: "",
+    // Optional AI-generated portrait: a storage_path in the private
+    // 'ai-art' bucket (null = none). Purely cosmetic and backward-
+    // compatible — older sheets simply don't have it.
+    portrait: null,
   };
 }
 
