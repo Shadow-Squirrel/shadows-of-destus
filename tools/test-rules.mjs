@@ -185,5 +185,40 @@ eq("parse 8d6", parseDice("8d6"), { spec: [{ sides: 6, count: 8 }], modifier: 0 
 eq("parse 3d4 + 3", parseDice("3d4 + 3"), { spec: [{ sides: 4, count: 3 }], modifier: 3 });
 eq("parse 1d8 + MOD (mod 3)", parseDice("1d8 + MOD", 3), { spec: [{ sides: 8, count: 1 }], modifier: 3 });
 
+/* ── regression tests for review fixes ── */
+// Manual HP is authoritative — no +1/level Dwarven Toughness on top.
+const hillDwarfManual = mk({
+  level: 5, race: { kind: "srd", index: "dwarf", subrace: "hill-dwarf" },
+  clazz: { kind: "srd", index: "fighter", subclass: "champion", skillChoices: ["athletics", "survival"] },
+  abilities: { str: 16, dex: 12, con: 16, int: 10, wis: 10, cha: 10 },
+  hp: { method: "manual", manual: 44, rolled: [], current: null, temp: 0 },
+});
+eq("manual HP is exactly what was entered (no toughness double-count)", derive(hillDwarfManual).hp.max, 44);
+eq("average HP still adds dwarven toughness", derive({ ...hillDwarfManual, hp: { method: "average", rolled: [] } }).hp.max > 44, true);
+
+// Monk with a shield: 10+DEX+shield can beat Unarmored Defense.
+const monkShield = mk({
+  level: 3, race: { kind: "srd", index: "human" },
+  clazz: { kind: "srd", index: "monk", subclass: "open-hand", skillChoices: ["acrobatics", "insight"] },
+  abilities: { str: 10, dex: 16, con: 12, int: 10, wis: 9, cha: 8 }, // human +1: dex17→+3, wis10→0
+  equipment: [{ kind: "armor", item: "shield", qty: 1, equipped: true }],
+});
+// unarmored defense = 10+3+0 = 13 (no shield allowed); 10+dex+shield = 10+3+2 = 15 → pick 15
+eq("monk+shield takes 10+DEX+shield (15) over Unarmored Defense (13)", derive(monkShield).ac.value, 15);
+
+// Level-20 barbarian Primal Champion: STR/CON cap 24.
+const primal = mk({
+  level: 20, race: { kind: "srd", index: "half-orc", bonusChoices: {} },
+  clazz: { kind: "srd", index: "barbarian", subclass: "berserker", skillChoices: ["athletics", "intimidation"] },
+  abilities: { str: 20, dex: 14, con: 20, int: 8, wis: 10, cha: 8 },
+  asi: [{ level: 4, kind: "asi", plus: { str: 2 } }], // 20 base +2 half-orc str? half-orc str+2 → 22, +2 asi → 24
+});
+eq("L20 barbarian STR can exceed 20 (Primal Champion cap 24)", derive(primal).abilities.str.score, 24);
+eq("L20 barbarian DEX still capped at 20", derive({ ...primal, abilities: { ...primal.abilities, dex: 24 } }).abilities.dex.score, 20);
+
+// parseDice rejects non-SRD die sizes (server would too).
+eq("parseDice rejects 2d7", parseDice("2d7"), null);
+eq("parseDice accepts 2d6", !!parseDice("2d6"), true);
+
 console.log(fails ? `\n${fails} FAILURES` : "\nAll rules tests pass.");
 process.exit(fails ? 1 : 0);

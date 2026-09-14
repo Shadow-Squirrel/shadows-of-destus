@@ -108,11 +108,16 @@ export function backgroundInfo(c) {
 export function finalAbilities(c) {
   const race = raceInfo(c);
   const out = {};
+  // Scores cap at 20, except a level-20 Barbarian's Primal Champion raises
+  // the STR and CON ceiling to 24.
+  const cls = c.clazz?.kind === "srd" ? c.clazz.index : null;
+  const primalChampion = cls === "barbarian" && (c.level || 1) >= 20;
   for (const a of ABILITIES) {
     let v = (c.abilities?.[a] ?? 10) + (race?.abilityBonuses?.[a] || 0);
     for (const step of c.asi || [])
       if (step.kind === "asi" && step.plus?.[a]) v += step.plus[a];
-    out[a] = Math.min(20, v);
+    const cap = primalChampion && (a === "str" || a === "con") ? 24 : 20;
+    out[a] = Math.min(cap, v);
   }
   return out;
 }
@@ -208,10 +213,15 @@ export function derive(c) {
       maxHP += (rolled || dieAvg(hitDie)) + mod("con");
     }
   }
-  let hpPerLevelBonus = 0;
-  if (traitIdx.has("dwarven-toughness")) hpPerLevelBonus += 1;
-  if (featureIdx.has("draconic-resilience")) hpPerLevelBonus += 1;
-  maxHP += hpPerLevelBonus * level;
+  // Dwarven Toughness / Draconic Resilience add +1 HP per level — but a
+  // manually-entered max is the player's authoritative total and already
+  // includes them, so only apply the bonus to computed (average/rolled) HP.
+  if (c.hp?.method !== "manual") {
+    let hpPerLevelBonus = 0;
+    if (traitIdx.has("dwarven-toughness")) hpPerLevelBonus += 1;
+    if (featureIdx.has("draconic-resilience")) hpPerLevelBonus += 1;
+    maxHP += hpPerLevelBonus * level;
+  }
   maxHP = Math.max(1, maxHP);
 
   /* equipment on body */
@@ -234,9 +244,14 @@ export function derive(c) {
     if (featureIdx.has("draconic-resilience"))
       candidates.push({ value: 13 + mod("dex"), desc: "Draconic Resilience", shieldOk: true });
   }
-  let ac = candidates.reduce((best, x) => (x.value > best.value ? x : best), candidates[0]);
-  let acValue = ac.value + (hasShield && ac.shieldOk ? 2 : 0) + (c.acBonus || 0);
-  const acDesc = [ac.desc, hasShield && ac.shieldOk ? "shield" : null, c.acBonus ? `${fmtMod(c.acBonus)} misc` : null]
+  // Pick the formula that yields the best FINAL AC, shield included — a
+  // monk's shield disallows their Unarmored Defense, so plain 10+DEX+shield
+  // can beat it and must be compared with the shield already folded in.
+  const withShield = (x) => x.value + (hasShield && x.shieldOk ? 2 : 0);
+  const ac = candidates.reduce((best, x) => (withShield(x) > withShield(best) ? x : best), candidates[0]);
+  const shieldApplied = hasShield && ac.shieldOk;
+  const acValue = withShield(ac) + (c.acBonus || 0);
+  const acDesc = [ac.desc, shieldApplied ? "shield" : null, c.acBonus ? `${fmtMod(c.acBonus)} misc` : null]
     .filter(Boolean).join(" + ");
 
   /* proficiency lists */
@@ -511,12 +526,17 @@ export function levelUpSummary(c, newLevel) {
 }
 
 /* ── parse "8d6", "3d4 + 3", "1d8 + MOD" into a roll spec ── */
+// Only the SRD die sizes the server's roll_dice() accepts — so a custom
+// attack/spell typed as "2d7" is rejected here too, keeping demo and real
+// modes in agreement instead of demo rolling something the server refuses.
+export const DIE_SIDES = [4, 6, 8, 10, 12, 20, 100];
 export function parseDice(str, abilityModValue = 0) {
   if (!str) return null;
   const m = String(str).match(/^\s*(\d+)d(\d+)\s*(?:\+\s*(MOD|\d+))?\s*$/i);
   if (!m) return null;
-  const spec = [{ sides: +m[2], count: +m[1] }];
+  const sides = +m[2], count = +m[1];
+  if (!DIE_SIDES.includes(sides) || count < 1) return null;
   let modifier = 0;
   if (m[3]) modifier = /mod/i.test(m[3]) ? abilityModValue : +m[3];
-  return { spec, modifier };
+  return { spec: [{ sides, count }], modifier };
 }

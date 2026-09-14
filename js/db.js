@@ -550,7 +550,7 @@ export const characters = {
       DEMO.characters.unshift(fresh);
       return fresh;
     }
-    if (charMode === "local") {
+    const saveLocal = () => {
       const all = lsChars();
       const ex = row.id && all.find((x) => x.id === row.id);
       if (ex) { Object.assign(ex, { name: row.name, sheet: row.sheet, updated_at: stamp }); lsPutChars(all); return ex; }
@@ -558,23 +558,48 @@ export const characters = {
       all.unshift(fresh);
       lsPutChars(all);
       return fresh;
+    };
+    if (charMode === "local") return saveLocal();
+    // charMode may still be null here (saving before any list() resolved it,
+    // e.g. opening characters.html#new directly). Try the DB; if the table
+    // isn't there yet, fall back to localStorage instead of losing the sheet.
+    try {
+      if (row.id)
+        return await q(sb.from("characters").update({ name: row.name, sheet: row.sheet }).eq("id", row.id).select().single());
+      return await q(sb.from("characters").insert({ name: row.name, sheet: row.sheet }).select().single());
+    } catch (e) {
+      if (!missingTable(e)) throw e;
+      charMode = "local";
+      return saveLocal();
     }
-    if (row.id)
-      return q(sb.from("characters").update({ name: row.name, sheet: row.sheet }).eq("id", row.id).select().single());
-    return q(sb.from("characters").insert({ name: row.name, sheet: row.sheet }).select().single());
   },
   remove: async (id) => {
     if (!sb) return (DEMO.characters = DEMO.characters.filter((x) => x.id !== id));
     if (charMode === "local") return lsPutChars(lsChars().filter((x) => x.id !== id));
-    await q(sb.from("characters").delete().eq("id", id));
+    try {
+      await q(sb.from("characters").delete().eq("id", id));
+    } catch (e) {
+      if (!missingTable(e)) throw e;
+      charMode = "local";
+      lsPutChars(lsChars().filter((x) => x.id !== id));
+    }
   },
-  // once the migration is applied, move any parked local sheets in
+  // once the migration is applied, move any parked local sheets in.
+  // Resolve the mode first so a null charMode doesn't fire inserts at a
+  // table that may not exist yet.
   migrateLocal: async () => {
-    if (!sb || charMode === "local") return 0;
+    if (!sb) return 0;
+    if (charMode === null) { try { await characters.list(); } catch {} }
+    if (charMode === "local") return 0;
     const parked = lsChars();
     if (!parked.length) return 0;
-    for (const row of parked)
-      await q(sb.from("characters").insert({ name: row.name, sheet: row.sheet }).select().single());
+    try {
+      for (const row of parked)
+        await q(sb.from("characters").insert({ name: row.name, sheet: row.sheet }).select().single());
+    } catch (e) {
+      if (missingTable(e)) { charMode = "local"; return 0; }
+      throw e;
+    }
     lsPutChars([]);
     return parked.length;
   },

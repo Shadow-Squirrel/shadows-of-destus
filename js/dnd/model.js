@@ -81,6 +81,11 @@ export function migrateCharacter(c) {
   out.spells = { ...fresh.spells, ...(c.spells || {}) };
   if (!Array.isArray(out.spells.slotsUsed) || out.spells.slotsUsed.length !== 9)
     out.spells.slotsUsed = [0, 0, 0, 0, 0, 0, 0, 0, 0];
+  // A hand-written or imported sheet may omit or mistype these — coerce so
+  // the renderer never crashes on a non-array spell list.
+  for (const k of ["cantrips", "known", "prepared", "custom"])
+    if (!Array.isArray(out.spells[k])) out.spells[k] = [];
+  if (typeof out.spells.pactUsed !== "number") out.spells.pactUsed = 0;
   out.details = { ...fresh.details, ...(c.details || {}) };
   for (const k of ["asi", "equipment", "attacksCustom", "customFeatures"])
     if (!Array.isArray(out[k])) out[k] = [];

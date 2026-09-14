@@ -42,11 +42,13 @@ drop policy if exists "characters: members write their own" on characters;
 create policy "characters: members write their own" on characters
   for insert to authenticated
   with check (is_member() and owner_email = my_email());
+-- WITH CHECK pins the resulting owner so a player can't reassign or orphan
+-- their own sheet to another email (the DM may still edit anyone's).
 drop policy if exists "characters: owner or dm edits" on characters;
 create policy "characters: owner or dm edits" on characters
   for update to authenticated
   using (owner_email = my_email() or is_dm())
-  with check (is_member());
+  with check (is_dm() or owner_email = my_email());
 drop policy if exists "characters: owner or dm deletes" on characters;
 create policy "characters: owner or dm deletes" on characters
   for delete to authenticated using (owner_email = my_email() or is_dm());
@@ -187,6 +189,31 @@ create policy "tokens: dm or the pc's player updates" on tokens
 drop policy if exists "tokens: dm removes" on tokens;
 create policy "tokens: dm removes" on tokens
   for delete to authenticated using (is_dm());
+
+-- A player may MOVE their own PC token but not restat it. RLS decides which
+-- rows they can touch; this trigger pins which COLUMNS a non-DM may change to
+-- position + initiative + conditions, so they can't reveal a hidden token,
+-- inflate hp_max, resize, or move it to another encounter.
+create or replace function guard_token_update() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if is_dm() then return new; end if;
+  if new.encounter_id is distinct from old.encounter_id
+     or new.kind is distinct from old.kind
+     or new.character_id is distinct from old.character_id
+     or new.monster_index is distinct from old.monster_index
+     or new.label is distinct from old.label
+     or new.size is distinct from old.size
+     or new.color is distinct from old.color
+     or new.hp_max is distinct from old.hp_max
+     or new.hidden is distinct from old.hidden then
+    raise exception 'Players may only move their own token, not restat it';
+  end if;
+  return new;
+end $$;
+drop trigger if exists tokens_guard_update on tokens;
+create trigger tokens_guard_update before update on tokens
+  for each row execute function guard_token_update();
 
 -- live sync for every open battle map
 alter publication supabase_realtime add table encounters;

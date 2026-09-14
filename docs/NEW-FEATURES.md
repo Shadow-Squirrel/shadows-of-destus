@@ -90,3 +90,31 @@ git clone --depth 1 https://github.com/5e-bits/5e-database /tmp/5edb
 SRD_DIR=/tmp/5edb/src/2014/en node tools/build-srd.mjs
 node tools/test-rules.mjs
 ```
+
+## Security notes (read before charging money)
+
+An adversarial review of this feature found no cross-player data leaks — the
+database's row-level security correctly stops one player reading or editing
+another's private data, and all user-entered text is HTML-escaped. Two items
+are fine for a private table of friends but should be closed before this
+becomes a multi-tenant paid product:
+
+1. **Email confirmation is off by design.** The invite list is the gate, and
+   `my_email()` trusts the signed-in JWT's email. With confirmation disabled
+   (as the README suggests, to dodge Supabase's free email limits), someone
+   who knew an *invited-but-not-yet-registered* email could register it first
+   and take that seat. For a private game that's a non-issue; for paying
+   customers, turn **Confirm email** on (or gate `my_email()` on a verified-
+   email claim) so a seat can't be claimed by an unverified address.
+2. **The battle-map animation channel isn't membership-gated.** Spell/attack
+   *animations* are broadcast over a Supabase Realtime channel that, unlike
+   the data tables, isn't yet restricted to party members — someone with the
+   public anon key could push spurious animations onto an open battle map (no
+   data is exposed or changed; it's cosmetic griefing). When you move to
+   per-customer campaigns, make that channel private and gate it on the same
+   membership check the tables use.
+
+Everything a player can actually *save* — characters, tokens, conditions — is
+locked down: players can only move their own token (a database trigger blocks
+restatting it), and can only edit their own character sheet (they can't even
+reassign it to someone else).

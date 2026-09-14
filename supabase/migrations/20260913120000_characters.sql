@@ -25,10 +25,12 @@ create policy "characters: members read" on characters
 create policy "characters: members write their own" on characters
   for insert to authenticated
   with check (is_member() and owner_email = my_email());
+-- WITH CHECK pins the resulting owner so a player can't reassign or orphan
+-- their own sheet to another email (the DM may still edit anyone's).
 create policy "characters: owner or dm edits" on characters
   for update to authenticated
   using (owner_email = my_email() or is_dm())
-  with check (is_member());
+  with check (is_dm() or owner_email = my_email());
 create policy "characters: owner or dm deletes" on characters
   for delete to authenticated using (owner_email = my_email() or is_dm());
 
