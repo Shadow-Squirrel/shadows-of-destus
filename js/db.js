@@ -1002,6 +1002,68 @@ export const ai = {
     rows.forEach((r) => { if (r.signedUrl) out[r.path] = r.signedUrl; });
     return out;
   },
+  // {campaignId, prompt} → a stat-block object (see js/pages/monsters.js).
+  // Uses the SEPARATE AI *text* budget (Claude via the generate-monster
+  // Edge Function). Throws .code==='not-configured' when unset, or the
+  // database's clean cap message.
+  generateMonster: async ({ campaignId, prompt }) => {
+    if (!sb) throw new Error("AI generation needs the live database — it isn't available in demo mode.");
+    const cid = campaignId || campaignId === 0 ? campaignId : getCampaign();
+    const { data, error } = await sb.functions.invoke("generate-monster", {
+      body: { campaignId: cid, prompt },
+    });
+    if (error) {
+      let msg = error.message || "Monster generation failed";
+      try {
+        const b = await error.context.json();
+        if (b?.error === "not-configured") throw notConfigured();
+        if (b?.error) msg = b.error;
+      } catch (inner) {
+        if (inner?.code === "not-configured") throw inner;
+        if (/Failed to send|Function not found|404|not found/i.test(msg)) throw notConfigured();
+      }
+      throw new Error(msg);
+    }
+    if (data?.error === "not-configured") throw notConfigured();
+    if (data?.error) throw new Error(data.error);
+    return data?.monster || null;
+  },
+  // The signed-in DM's AI *text* usage this month, or null if not set up.
+  textUsage: async () => {
+    if (!sb) return null;
+    try { return await q(sb.rpc("ai_text_usage")); }
+    catch (e) {
+      if (/does not exist|Could not find|schema cache|function/i.test(e?.message || "")) return null;
+      throw e;
+    }
+  },
+};
+
+/* ═══ Homebrew monsters (custom stat blocks, per campaign) ═══
+   Ordinary content, like maps: party members read, only a DM writes
+   (direct-write RLS). Built by hand or with AI; an optional portrait
+   lives in the 'ai-art' bucket (reuse ai.artUrls to view it). */
+export const homebrewMonsters = {
+  list: async () =>
+    sb
+      ? q(scope(sb.from("homebrew_monsters").select("*")).order("created_at", { ascending: false }))
+      : (DEMO.homebrewMonsters || []).filter(inCampaign),
+  // row: {id?, name, cr, data, art_path}
+  save: async (row) => {
+    const fields = { name: row.name || "New monster", cr: row.cr || "", data: row.data || {}, art_path: row.art_path ?? null };
+    if (!sb) {
+      DEMO.homebrewMonsters ||= [];
+      if (row.id) return Object.assign(DEMO.homebrewMonsters.find((m) => m.id === row.id) || {}, fields);
+      const m = { ...fields, id: uid(), campaign_id: campaignId, created_at: new Date().toISOString() };
+      DEMO.homebrewMonsters.push(m); return m;
+    }
+    if (row.id) { await q(sb.from("homebrew_monsters").update(fields).eq("id", row.id)); return { id: row.id }; }
+    return q(sb.from("homebrew_monsters").insert(stamp(fields)).select("id").single());
+  },
+  remove: async (id) => {
+    if (!sb) return (DEMO.homebrewMonsters = (DEMO.homebrewMonsters || []).filter((m) => m.id !== id));
+    await q(sb.from("homebrew_monsters").delete().eq("id", id));
+  },
 };
 
 /* ═══ Party roster (links to D&D Beyond) ═══ */

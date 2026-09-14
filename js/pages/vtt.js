@@ -5,7 +5,7 @@
 // whose effects burst on everyone's screen at once (effects.js).
 // Demo mode plays the whole thing solo, in memory.
 import { boot, esc, guard, toast } from "../shell.js";
-import { vtt, characters, dice, maps } from "../db.js";
+import { vtt, characters, dice, maps, homebrewMonsters } from "../db.js";
 import { createBoard } from "../vtt/board.js";
 import { createFx } from "../vtt/effects.js";
 import { createRollStage, dieSvg } from "../roll-fx.js";
@@ -66,6 +66,7 @@ async function main() {
   let tokens = [];             // tokens of `current` (players: hidden already filtered)
   let allMaps = [];
   let charsAll = [];
+  let hbById = {};             // homebrew monsters by id (custom bestiary)
   let sideTab = "tokens";
   let castSelId = "";          // Cast tab: chosen character id
   let bq = "", bcr = "any";    // Bestiary search + CR filter
@@ -316,9 +317,13 @@ async function main() {
 
   /* ═══════════ data loading ═══════════ */
   async function refreshAll(keepId) {
-    [encounters, allMaps, charsAll] = await Promise.all([
+    let hbList = [];
+    [encounters, allMaps, charsAll, hbList] = await Promise.all([
       vtt.encounters.list(), maps.list(), characters.list(),
+      homebrewMonsters.list().catch(() => []),
     ]);
+    hbById = {};
+    hbList.forEach((h) => { hbById[h.id] = h; });
     const active = encounters.find((e) => e.active) || null;
     if (isDM) current = encounters.find((e) => e.id === keepId) || active || encounters[0] || null;
     else current = active;
@@ -595,7 +600,7 @@ async function main() {
   /* ── Tokens tab ── */
   function tokenSub(t) {
     if (t.kind === "monster") {
-      const m = MONSTERS[t.monster_index];
+      const m = monsterByIndex(t.monster_index);
       return m ? `CR ${m.crText}` : "monster";
     }
     if (t.kind === "pc") {
@@ -715,6 +720,34 @@ async function main() {
     if (tok) await updateToken(tok, { hp_current: currentHp(sheet, drv), hp_max: drv?.hp?.max ?? tok.hp_max });
   }
 
+  /* ── homebrew monsters: adapt a stored stat block to the same shape
+        the SRD MONSTERS use, and resolve a token's monster_index (an
+        "hb:<id>" prefix means a custom monster) to either source. ── */
+  function crNum(cr) {
+    const s = String(cr ?? "").trim();
+    if (s.includes("/")) { const [a, b] = s.split("/").map(Number); return b ? a / b : 0; }
+    const n = parseFloat(s); return Number.isFinite(n) ? n : 0;
+  }
+  function hbToMonster(hb) {
+    const d = hb.data || {};
+    return {
+      index: "hb:" + hb.id, name: hb.name, homebrew: true, art_path: hb.art_path || null,
+      cr: crNum(hb.cr || d.cr), crText: String(hb.cr || d.cr || "?"),
+      size: d.size || "Medium", type: d.type || "monster", alignment: d.alignment || "",
+      ac: d.ac ?? 12, acType: d.ac_note || "", hp: d.hp ?? 10, hpRoll: d.hp_dice || "",
+      speed: d.speed || "",
+      abilities: { str: d.str ?? 10, dex: d.dex ?? 10, con: d.con ?? 10, int: d.int ?? 10, wis: d.wis ?? 10, cha: d.cha ?? 10 },
+      _hb: d,
+    };
+  }
+  function monsterByIndex(idx) {
+    if (typeof idx === "string" && idx.startsWith("hb:")) {
+      const hb = hbById[idx.slice(3)];
+      return hb ? hbToMonster(hb) : null;
+    }
+    return MONSTERS[idx] || null;
+  }
+
   /* ── Bestiary tab (DM) ── */
   const CR_RANGES = { any: [0, 99], "0-1": [0, 1], "2-4": [2, 4], "5-10": [5, 10], "11+": [11, 99] };
   function renderBestiaryTab(body) {
@@ -737,14 +770,17 @@ async function main() {
     function fill() {
       const [lo, hi] = CR_RANGES[bcr] || CR_RANGES.any;
       const needle = bq.trim().toLowerCase();
-      const hits = Object.values(MONSTERS).filter((m) =>
-        (!needle || m.name.toLowerCase().includes(needle)) && m.cr >= lo && m.cr <= hi);
-      hits.sort((a, b) => a.cr - b.cr || a.name.localeCompare(b.name));
+      const match = (m) => (!needle || m.name.toLowerCase().includes(needle)) && m.cr >= lo && m.cr <= hi;
+      const srd = Object.values(MONSTERS).filter(match);
+      const custom = Object.values(hbById).map(hbToMonster).filter(match);
+      const bycr = (a, b) => a.cr - b.cr || a.name.localeCompare(b.name);
+      srd.sort(bycr); custom.sort(bycr);
+      const hits = [...custom, ...srd];         // your homebrew monsters first
       const shown = hits.slice(0, 40);
       listEl.innerHTML = shown.map((m, i) => `
         <div class="beast-row">
           <span>
-            <span class="b-name" data-i="${i}">${esc(m.name)}</span><br>
+            <span class="b-name" data-i="${i}">${esc(m.name)}</span>${m.homebrew ? '<span class="pill mystic" style="margin-left:5px">homebrew</span>' : ""}<br>
             <span class="b-meta">CR ${esc(m.crText)} · ${esc(m.size.toLowerCase())} ${esc(m.type)}</span>
           </span>
           <button class="btn-ghost b-add" data-i="${i}" style="padding:3px 10px">Add</button>
@@ -766,7 +802,7 @@ async function main() {
   }
   function dexModOf(t) {
     if (t.kind === "monster") {
-      const m = MONSTERS[t.monster_index];
+      const m = monsterByIndex(t.monster_index);
       return m ? abilityMod(m.abilities.dex) : 0;
     }
     if (t.kind === "pc") {
@@ -1046,7 +1082,7 @@ async function main() {
     menuTok = t;
     menuAnchor = menuPoint(screenPt);
     const mine = isMine(t);
-    const m = t.kind === "monster" ? MONSTERS[t.monster_index] : null;
+    const m = t.kind === "monster" ? monsterByIndex(t.monster_index) : null;
     const kindLine = t.kind === "monster"
       ? `${m ? m.name : "monster"} · CR ${m ? m.crText : "?"}${t.hidden ? " · hidden" : ""}`
       : t.kind === "pc" ? `PC · ${tokenSub(t)}` : "marker";
@@ -1248,9 +1284,42 @@ async function main() {
     menuEl.style.top = y + "px";
   }
 
+  /* ═══════════ homebrew (custom) stat block modal ═══════════ */
+  function openHomebrewStatBlock(m) {
+    const d = m._hb || {};
+    const modal = openModal(m.name, `<div class="statblock"></div>`);
+    const box = modal.el.querySelector(".statblock");
+    const A = m.abilities;
+    const line = (label, v) => (v && String(v).length ? `<div class="sb-line"><strong>${label}</strong> ${esc(v)}</div>` : "");
+    const sect = (title, arr) => (arr && arr.length)
+      ? `<h4 style="font-family:var(--font-display); color:var(--gold); letter-spacing:.05em; font-size:14px; margin:14px 0 2px">${esc(title)}</h4>
+         ${arr.map((a) => `<div class="sb-act"><strong>${esc(a.name)}.</strong> ${esc(a.text)}</div>`).join("")}`
+      : "";
+    box.innerHTML = `
+      <div class="sb-sub">${esc(m.size)} ${esc(m.type)}${m.alignment ? ", " + esc(m.alignment) : ""}</div>
+      <div class="sb-line"><strong>AC</strong> ${esc(String(m.ac))}${m.acType ? ` (${esc(m.acType)})` : ""} · <strong>HP</strong> ${esc(String(m.hp))}${m.hpRoll ? ` (${esc(m.hpRoll)})` : ""} · <strong>Speed</strong> ${esc(m.speed)}</div>
+      <div class="sb-abils">
+        ${["str", "dex", "con", "int", "wis", "cha"].map((k) => `<div><strong>${k.toUpperCase()}</strong>${A[k]} (${fmtMod(abilityMod(A[k]))})</div>`).join("")}
+      </div>
+      ${line("Saves", d.saves)}
+      ${line("Skills", d.skills)}
+      ${line("Resist", d.damage_resistances)}
+      ${line("Immune", d.damage_immunities)}
+      ${line("Condition immune", d.condition_immunities)}
+      ${line("Senses", d.senses)}
+      ${line("Languages", d.languages)}
+      <div class="sb-line"><strong>CR</strong> ${esc(m.crText)}</div>
+      ${sect("Traits", d.traits)}
+      ${sect("Actions", d.actions)}
+      ${sect("Reactions", d.reactions)}
+      ${sect("Legendary Actions", d.legendary)}
+      <p class="muted small" style="margin-top:12px; font-style:italic">Custom monster — roll its attacks and damage from the Dice tray.</p>`;
+  }
+
   /* ═══════════ SRD stat block modal ═══════════ */
   async function openStatBlock(m) {
     if (!m) return;
+    if (m.homebrew) return openHomebrewStatBlock(m);
     const modal = openModal(m.name, `<div class="statblock"><p class="muted small" style="font-style:italic">turning the bestiary's pages…</p></div>`);
     const det = await detailsOf(m.index);
     const box = modal.el.querySelector(".statblock");
