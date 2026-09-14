@@ -340,11 +340,16 @@ async function main() {
   async function applyMap() {
     let url = null;
     const m = current?.map_id ? allMaps.find((x) => x.id === current.map_id) : null;
-    if (m?.image_url) {
+    // Uploaded maps live in private storage (storage_path) and need a signed
+    // URL; a map may instead point at an external image via image_url. Mirror
+    // the Maps page exactly: prefer the uploaded file, else the direct link.
+    if (m?.storage_path) {
       try {
-        const urls = await maps.signedUrls([m.image_url]);
-        url = urls[m.image_url] || null;
+        const urls = await maps.signedUrls([m.storage_path]);
+        url = urls[m.storage_path] || null;
       } catch (e) { console.error(e); }
+    } else if (m?.image_url) {
+      url = m.image_url;
     }
     board.setMap(url);
   }
@@ -525,7 +530,7 @@ async function main() {
       <select id="em-map">
         <option value="">— no map (blank parchment grid) —</option>
         ${allMaps.map((m) => `<option value="${esc(m.id)}" ${enc?.map_id === m.id ? "selected" : ""}>
-          ${esc(m.title)}${m.revealed ? "" : " (hidden from players)"}${m.image_url ? "" : " — no image"}</option>`).join("")}
+          ${esc(m.title)}${m.revealed ? "" : " (hidden from players)"}${(m.storage_path || m.image_url) ? "" : " — no image"}</option>`).join("")}
       </select>
       <div class="row" style="margin-top:10px; align-items:flex-end">
         <div><label class="field">Map pixels per 5-ft square</label>
