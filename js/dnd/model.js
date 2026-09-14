@@ -46,6 +46,7 @@ export function newCharacter() {
       manual: null,      // full max HP when method=manual
       current: null,     // null = full
       temp: 0,
+      hitDiceUsed: 0,    // hit dice spent since the last long rest
     },
     acBonus: 0,          // misc AC bonus (ring of protection, fighting style…)
     // [{kind:"weapon"|"armor"|"gear"|"pack"|"custom", item:index|null,
@@ -78,6 +79,7 @@ export function migrateCharacter(c) {
   const out = { ...fresh, ...c, v: CHAR_VERSION };
   out.abilities = { ...fresh.abilities, ...(c.abilities || {}) };
   out.hp = { ...fresh.hp, ...(c.hp || {}) };
+  if (typeof out.hp.hitDiceUsed !== "number" || out.hp.hitDiceUsed < 0) out.hp.hitDiceUsed = 0;
   out.spells = { ...fresh.spells, ...(c.spells || {}) };
   if (!Array.isArray(out.spells.slotsUsed) || out.spells.slotsUsed.length !== 9)
     out.spells.slotsUsed = [0, 0, 0, 0, 0, 0, 0, 0, 0];

@@ -13,6 +13,7 @@ import {
   derive, eligibleSpells, pendingChoices, levelUpSummary, classInfo,
   fmtMod, parseDice,
 } from "../../dnd/rules.js";
+import { longRest, shortRest, spendHitDie, hitDiceLeft } from "../../dnd/rest.js";
 import { ABILITIES, ABILITY_NAMES, SKILLS } from "../../dnd/data/core.js";
 import { SPELLS } from "../../dnd/data/spells.js";
 import { WEAPONS, ARMOR, GEAR, PACKS } from "../../dnd/data/equipment.js";
@@ -199,11 +200,15 @@ export function renderSheet(root, ctx, opts) {
     const frac = max ? cur / max : 0;
     const cls = frac < 0.25 ? " dying" : frac < 0.5 ? " hurt" : "";
     const temp = char.hp.temp || 0;
+    const hdLeft = hitDiceLeft(char, drv);
     return `
       <div class="card">
         <div class="row" style="justify-content:space-between">
           <h3 class="section" style="margin:0">Hit points</h3>
-          ${canEdit ? `<button class="btn-ghost" id="b-longrest" title="Restore HP and all spell slots">🌙 Long rest</button>` : ""}
+          ${canEdit ? `<span class="row" style="gap:6px">
+            <button class="btn-ghost" id="b-shortrest" title="Warlock pact slots return; spend hit dice to heal">🔆 Short rest</button>
+            <button class="btn-ghost" id="b-longrest" title="Restore HP, all spell slots and half your hit dice">🌙 Long rest</button>
+          </span>` : ""}
         </div>
         <div class="hp-wrap" style="margin-top:10px">
           <div class="hp-bar"><div class="hp-fill${cls}" style="width:${(frac * 100).toFixed(1)}%"></div></div>
@@ -216,6 +221,10 @@ export function renderSheet(root, ctx, opts) {
           <button class="btn-ghost" id="b-heal">✚ Heal</button>
           <span class="hp-num" style="margin-left:auto"><label class="muted small" for="hp-temp">temp </label><input type="number" id="hp-temp" min="0" max="999" value="${temp}" /></span>
         </div>` : ""}
+        <div class="row" style="margin-top:10px; gap:8px; align-items:center">
+          <span class="muted small">Hit dice ${hdLeft} / ${drv.hp.hitDiceCount} (d${drv.hp.hitDie})</span>
+          ${canEdit ? `<button class="btn-ghost" id="b-hd" ${hdLeft <= 0 ? "disabled" : ""} title="Spend a hit die to heal">🎲 Spend</button>` : ""}
+        </div>
       </div>`;
   }
 
@@ -291,12 +300,22 @@ export function renderSheet(root, ctx, opts) {
     });
     on("#b-init", () => rollD20(L("Initiative"), drv.initiative));
     on("#b-longrest", () => {
-      char.hp.current = null;
-      char.hp.temp = 0;
-      char.spells.slotsUsed = [0, 0, 0, 0, 0, 0, 0, 0, 0];
-      char.spells.pactUsed = 0;
+      longRest(char, drv);
       save(true);
-      toast("🌙 Long rest — hit points and spell slots restored");
+      toast("🌙 Long rest — HP, spell slots and hit dice restored");
+      render();
+    });
+    on("#b-shortrest", () => {
+      shortRest(char);
+      save(true);
+      toast("🔆 Short rest — pact slots restored; spend hit dice to heal");
+      render();
+    });
+    on("#b-hd", () => {
+      const r = spendHitDie(char, drv);
+      if (!r) return toast("No hit dice left");
+      save(true);
+      toast(`🎲 Hit die d${r.die}: ${r.roll}${r.con ? " " + fmtMod(r.con) : ""} = +${r.healed} HP → ${r.current}/${r.max}`);
       render();
     });
     on("#b-dmg", () => {

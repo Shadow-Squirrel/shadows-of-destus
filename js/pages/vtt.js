@@ -11,6 +11,7 @@ import { createFx } from "../vtt/effects.js";
 import { createRollStage, dieSvg } from "../roll-fx.js";
 import { derive, parseDice, abilityMod, fmtMod } from "../dnd/rules.js";
 import { migrateCharacter } from "../dnd/model.js";
+import { longRest, shortRest, spendHitDie, currentHp, hitDiceLeft } from "../dnd/rest.js";
 import { MONSTERS } from "../dnd/data/monsters.js";
 import { CONDITIONS } from "../dnd/data/core.js";
 import { SPELLS } from "../dnd/data/spells.js";
@@ -703,6 +704,17 @@ async function main() {
     await vtt.tokens.update(t.id, fields);
   }
 
+  // Persist a PC's sheet (HP, slots, rest state) and mirror the live HP onto
+  // that character's board token so the sheet stays the source of truth.
+  async function persistSheet(crow, sheet, tok) {
+    uncache(crow.id);
+    _sheets.set(crow.id, sheet);
+    crow.sheet = sheet;
+    await characters.save({ id: crow.id, name: crow.name, sheet }, crow.owner_email);
+    const drv = drvOf(crow);
+    if (tok) await updateToken(tok, { hp_current: currentHp(sheet, drv), hp_max: drv?.hp?.max ?? tok.hp_max });
+  }
+
   /* ── Bestiary tab (DM) ── */
   const CR_RANGES = { any: [0, 99], "0-1": [0, 1], "2-4": [2, 4], "5-10": [5, 10], "11+": [11, 99] };
   function renderBestiaryTab(body) {
@@ -1015,19 +1027,54 @@ async function main() {
       return;
     }
 
+    // For a PC token linked to a character sheet, the sheet is the source of
+    // truth: show HP + temp + rest controls that edit the sheet (and mirror
+    // onto the token). Monsters/markers keep the plain token-HP row.
+    const crow = t.kind === "pc" && t.character_id ? charById(t.character_id) : null;
+    const sheetCtl = !!(crow && (isDM || mine) && drvOf(crow));
+    let charBlock = "";
+    if (sheetCtl) {
+      const s = sheetOf(crow), d = drvOf(crow);
+      const max = d?.hp?.max ?? 0, cur = currentHp(s, d), temp = s.hp?.temp || 0;
+      const hdLeft = hitDiceLeft(s, d), hdTotal = d?.hp?.hitDiceCount ?? 0, hitDie = d?.hp?.hitDie ?? 8;
+      charBlock = `
+        <div class="tm-char" style="border-top:1px solid var(--border-soft); margin:2px 0 6px; padding-top:6px">
+          <div class="row" style="gap:5px; margin-bottom:6px">
+            <span class="muted small">HP</span>
+            <button class="btn-ghost" id="tm-c-minus" style="padding:2px 9px">−</button>
+            <input type="number" id="tm-c-hp" value="${cur}" style="width:54px; text-align:center; padding:3px 4px" />
+            <button class="btn-ghost" id="tm-c-plus" style="padding:2px 9px">＋</button>
+            <span class="muted small">/ ${max}</span>
+            ${temp ? `<span class="pill steel" title="temporary HP">+${temp}</span>` : ""}
+          </div>
+          <div class="row" style="gap:5px; margin-bottom:6px">
+            <button class="btn-ghost" id="tm-c-dmg" style="padding:2px 9px" title="Apply damage">🗡</button>
+            <button class="btn-ghost" id="tm-c-heal" style="padding:2px 9px" title="Heal">✚</button>
+            <input type="number" id="tm-c-amt" placeholder="amt" style="width:52px; text-align:center; padding:3px 4px" />
+            <input type="number" id="tm-c-temp" placeholder="tmp" title="Set temporary HP" value="${temp || ""}" style="width:50px; text-align:center; padding:3px 4px" />
+          </div>
+          <div class="row" style="gap:5px; margin-bottom:4px">
+            <button class="btn-ghost" id="tm-c-long" title="Full HP, all spell slots, hit dice back">🌙 Long</button>
+            <button class="btn-ghost" id="tm-c-short" title="Pact slots back; spend hit dice to heal">🔆 Short</button>
+            <button class="btn-ghost" id="tm-c-hd" ${hdLeft <= 0 ? "disabled" : ""} title="Spend a hit die to heal">🎲 d${hitDie}</button>
+            <span class="muted small">HD ${hdLeft}/${hdTotal}</span>
+          </div>
+        </div>`;
+    }
+
     menuEl.innerHTML = `
       ${isDM
         ? `<input type="text" id="tm-label" maxlength="30" value="${esc(t.label)}" style="font-family:var(--font-display); font-weight:700; padding:4px 8px; margin-bottom:4px" />`
         : `<h4>${esc(t.label)}</h4>`}
       <div class="muted small" style="margin-bottom:6px">${esc(kindLine)}</div>
-      ${showHp ? `
+      ${sheetCtl ? charBlock : (showHp ? `
         <div class="row" style="gap:5px; margin-bottom:6px">
           <span class="muted small">HP</span>
           <button class="btn-ghost" id="tm-hp-minus" style="padding:2px 9px">−</button>
           <input type="number" id="tm-hp" value="${t.hp_current ?? ""}" style="width:56px; text-align:center; padding:3px 4px" />
           <button class="btn-ghost" id="tm-hp-plus" style="padding:2px 9px">＋</button>
           <span class="muted small">/ ${t.hp_max ?? "?"}</span>
-        </div>` : ""}
+        </div>` : "")}
       ${isDM ? `<div class="cond-grid" id="tm-conds">
         ${Object.keys(CONDITIONS).map((k) =>
           `<button type="button" class="cond-chip ${conds.includes(k) ? "on" : ""}" data-c="${esc(k)}" title="${esc(CONDITIONS[k].name)}">${esc(CONDITIONS[k].name.toLowerCase())}</button>`).join("")}
@@ -1051,6 +1098,41 @@ async function main() {
     if (hpIn) hpIn.onchange = () => guard(() => updateToken(t, { hp_current: clampHp(t, parseInt(hpIn.value, 10)) }));
     on("#tm-hp-minus", async () => { await updateToken(t, { hp_current: clampHp(t, (t.hp_current ?? t.hp_max ?? 0) - 1) }); hpIn.value = t.hp_current; });
     on("#tm-hp-plus", async () => { await updateToken(t, { hp_current: clampHp(t, (t.hp_current ?? 0) + 1) }); hpIn.value = t.hp_current; });
+    if (sheetCtl) {
+      const s = sheetOf(crow);
+      const amtEl = menuEl.querySelector("#tm-c-amt");
+      const amt = () => Math.max(0, parseInt(amtEl?.value, 10) || 0);
+      const setCur = (v) => { const mx = drvOf(crow)?.hp?.max ?? 0; s.hp = { ...s.hp, current: Math.max(0, Math.min(mx, v)) }; };
+      const done = async (msg) => { await persistSheet(crow, s, t); if (msg) toast(msg); openTokenMenu(t, null); };
+      const hpEl = menuEl.querySelector("#tm-c-hp");
+      if (hpEl) hpEl.onchange = () => guard(async () => { setCur(parseInt(hpEl.value, 10) || 0); await done(); });
+      on("#tm-c-minus", async () => { setCur(currentHp(s, drvOf(crow)) - 1); await done(); });
+      on("#tm-c-plus", async () => { setCur(currentHp(s, drvOf(crow)) + 1); await done(); });
+      on("#tm-c-dmg", async () => {
+        const a = amt(); if (!a) return;
+        const fromTemp = Math.min(s.hp?.temp || 0, a);
+        s.hp = { ...s.hp, temp: (s.hp?.temp || 0) - fromTemp };
+        setCur(currentHp(s, drvOf(crow)) - (a - fromTemp));
+        await done(`${firstName(crow.name)} takes ${a} damage`);
+      });
+      on("#tm-c-heal", async () => {
+        const a = amt(); if (!a) return;
+        setCur(currentHp(s, drvOf(crow)) + a);
+        await done(`${firstName(crow.name)} heals ${a}`);
+      });
+      const tempEl = menuEl.querySelector("#tm-c-temp");
+      if (tempEl) tempEl.onchange = () => guard(async () => {
+        s.hp = { ...s.hp, temp: Math.max(0, parseInt(tempEl.value, 10) || 0) };
+        await done();
+      });
+      on("#tm-c-long", async () => { longRest(s, drvOf(crow)); await done(`${firstName(crow.name)}: long rest — HP, spell slots & hit dice restored`); });
+      on("#tm-c-short", async () => { shortRest(s); await done(`${firstName(crow.name)}: short rest — pact slots back; spend hit dice to heal`); });
+      on("#tm-c-hd", async () => {
+        const r = spendHitDie(s, drvOf(crow));
+        if (!r) return toast("No hit dice left");
+        await done(`Hit die d${r.die}: ${r.roll}${r.con ? " " + fmtMod(r.con) : ""} = +${r.healed} HP → ${r.current}/${r.max} · ${r.remaining} HD left`);
+      });
+    }
     const init = menuEl.querySelector("#tm-init");
     if (init) init.onchange = () => guard(() => {
       const v = init.value.trim() === "" ? null : Math.max(-20, Math.min(99, parseInt(init.value, 10) || 0));
