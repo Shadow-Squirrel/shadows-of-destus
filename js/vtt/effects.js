@@ -97,11 +97,17 @@ export function createFx(canvas, view) {
     } catch { return false; }
   })();
 
-  const fxCtx = canvas.getContext("2d");   // the real fx canvas (fallback + clears)
-  let offscreen = null;                    // webgl draw target
-  let glow = null;                         // Pixi bloom layer (or null)
-  let webgl = false;                       // active renderer flag
-  let ctx = fxCtx;                         // the LIVE draw context (repointed on upgrade)
+  // The 2-D vector engine ALWAYS paints its (data-driven, pseudo-3D) spell art
+  // straight into the fx canvas — bright, proven, and it IS the canvas-only
+  // fallback. When the GPU compositor is up it reads that same canvas as a live
+  // texture and stacks a purely ADDITIVE glow layer over it (threshold bloom,
+  // dynamic light, textured particles, plasma, per-cast post fx). The overlay can
+  // only ADD cinematic light, so the crisp 2-D art beneath is never dimmed or
+  // blown out — no lossy re-presentation of the mixed-compositing art.
+  const fxCtx = canvas.getContext("2d");
+  const ctx = fxCtx;                        // the live draw context (always the fx canvas)
+  let glow = null;                          // Pixi additive-overlay layer (or null)
+  let webgl = false;                        // GPU enhancement active?
 
   let effects = [];   // {stages:[...], t0, from, to, palette}
   let particles = []; // pseudo-3D motes: {grid,vx,vy,z,vz,zg,drag,gravity,born,life,size,palette,…}
@@ -117,18 +123,10 @@ export function createFx(canvas, view) {
     try {
       const mod = await import("./fx-webgl.js");
       if (!mod.webglAvailable()) return;
-      const off = document.createElement("canvas");
-      off.width = Math.max(1, canvas.width);
-      off.height = Math.max(1, canvas.height);
-      const layer = await mod.createGlowLayer(off, wrap, { strength: 1 });
-      // commit the switch
-      offscreen = off;
+      // the GL layer reads the fx canvas itself as its live texture source
+      const layer = await mod.createGlowLayer(canvas, wrap, { strength: 1, view });
       glow = layer;
-      ctx = offscreen.getContext("2d");
       webgl = true;
-      // wipe any stale 2-D art from the fx canvas hiding under the GL layer
-      fxCtx.setTransform(1, 0, 0, 1, 0, 0);
-      fxCtx.clearRect(0, 0, canvas.width, canvas.height);
       if ((effects.length || particles.length) && !running) {
         running = true; requestAnimationFrame(frame);
       } else if (glow) {
@@ -149,7 +147,7 @@ export function createFx(canvas, view) {
   function fxDestroy() {
     effects = []; particles = []; running = false;
     try { glow?.destroy(); } catch { /* fine */ }
-    glow = null; offscreen = null; webgl = false; ctx = fxCtx;
+    glow = null; webgl = false;
     try { domWatch?.disconnect(); } catch { /* fine */ }
     domWatch = null;
   }
@@ -157,6 +155,13 @@ export function createFx(canvas, view) {
   initWebgl();
 
   function spawnParticles(n, originGrid, opts) {
+    // The 2-D particle system (dense additive glow/ember motes, pseudo-3D z-arc
+    // + ground shadow) is drawn into the offscreen and then GPU-bloomed by the
+    // compositor — proven, rich, and it covers ALL spells. On the GPU path we
+    // ALSO mirror the spawn as textured sprite particles (soft glow, ember,
+    // spark-streak, smoke, shard) for the crisp additive sparks/streaks/smoke a
+    // flat mote can't give — the two read as one denser, more cinematic burst.
+    if (webgl && glow && glow.emit) emitGpu(Math.round(n * 0.6), originGrid, opts);
     const cap = 700 - particles.length;
     n = Math.min(n, Math.max(0, cap));
     for (let i = 0; i < n; i++) {
@@ -182,6 +187,142 @@ export function createFx(canvas, view) {
         vz: hgt ? (opts.vz != null ? opts.vz : rand(6, 15)) : 0,   // ft/s upward
         zg: hgt ? (opts.zg != null ? opts.zg : 30) : 0,           // ft/s² pulling down
       });
+    }
+  }
+
+  /* Route a 2-D spawn spec to the GPU particle system. Converts feet/sec →
+     px/sec (F) and px@cell-70 → px (cs), infers a particle KIND + a colour
+     ramp from the effect palette, and passes turbulence/blend hints. */
+  function emitGpu(n, originGrid, opts) {
+    const o = P(originGrid);
+    const cs = view.cellPx() / 70;
+    const p = opts.palette || pal("evocation");
+    const height = !!opts.height;
+    const kind = opts.kind || (height ? "ember" : "glow");
+    // fire/energy → hot core cooling to the edge tone; smoke/dust → grey drift
+    const col0 = opts.col0 || p.core;
+    const col1 = opts.col1 || (kind === "smoke" ? p.edge : p.mid || p.edge);
+    glow.emit({
+      x: o.x, y: o.y, count: n, kind,
+      angle: opts.angle, spread: opts.spread ?? (opts.angle != null ? 0.4 : undefined),
+      speed: opts.speed ? [F(opts.speed[0]), F(opts.speed[1])] : [F(1), F(6)],
+      life: opts.life || [400, 900],
+      size: [(opts.size ? opts.size[0] : 2) * cs, (opts.size ? opts.size[1] : 5) * cs],
+      col0, col1,
+      blend: opts.blend,
+      drag: opts.drag ?? 0.9,
+      gravity: opts.gravity ? F(opts.gravity) : 0,
+      rise: opts.rise ? F(opts.rise) : 0,
+      turb: opts.turb != null ? opts.turb * cs : (kind === "ember" || kind === "smoke" ? 90 * cs : 0),
+      z: height,
+      streak: opts.streak || kind === "spark",
+      spin: opts.spin,
+      grow: opts.grow,
+    });
+    // fire embers loft a little dim-glow "smoke" haze for volume — kept warm/low
+    // so, added over the scene, it reads as a soft heated shimmer rather than a
+    // (impossible-to-darken) grey plume
+    if (opts.smoke && n > 0) {
+      glow.emit({
+        x: o.x, y: o.y, count: Math.max(2, Math.round(n * 0.3)), kind: "glow",
+        speed: [F(1), F(4)], life: [700, 1500], size: [7 * cs, 15 * cs],
+        col0: "#3a241a", col1: "#120a06", drag: 0.92, rise: F(5), turb: 70 * cs, grow: 2.0,
+      });
+    }
+  }
+
+  /* ── cinematic hint dispatch (GPU only) ──────────────────────────
+     Fired ONCE when a stage first goes live. Reads the stage type and the
+     effect palette and spins up the right post effect — so EVERY spell, via
+     the generic stages it is composed of, gets bloom-lit impacts, dynamic
+     light, shockwaves, god-rays, heat-haze, screen flash and chroma without
+     per-spell wiring. Recipes may tune or suppress it (s.cine = {...} / false). */
+  function isHot(p) { return p === pal("fire") || p === pal("radiant") || p === pal("holy") || p === pal("lightning") || p === pal("force"); }
+  function autoCine(s, eff) {
+    if (!webgl || !glow || s.cine === false) return;
+    const c = s.cine || {};
+    const pC = (g) => P(g);
+    const at = s.at === "from" ? eff.from : eff.to;
+    const pal0 = eff.palette;
+    const hot = isHot(pal0);
+    const glowCol = pal0.core;
+    switch (s.type) {
+      case "burst": {
+        const R = F(s.radiusFt ?? 10);
+        // a transient wash of light — kept modest so it LIGHTS the scene rather
+        // than hazing it (the blast art + embers stay the star)
+        glow.addLight(pC(at).x, pC(at).y, glowCol, R * (c.lightScale ?? 1.05), c.lightTtl ?? Math.max(260, s.dur * 0.55), c.lightPeak ?? 0.5);
+        const big = (s.radiusFt ?? 10) >= 15 || s.embers || c.shock;
+        if (big) {
+          glow.shock(pC(at).x, pC(at).y, { amplitude: c.shockAmp ?? (s.embers ? 24 : 16), wavelength: 100, ttl: c.shockTtl ?? 750, radius: R * 2.2 });
+          glow.flash(c.flashCol || pal0.mid, c.flashPeak ?? (s.embers ? 0.42 : 0.28), 280);
+          if (c.chroma !== false) glow.chroma(c.chromaPx ?? 6, 320);
+        }
+        if (s.embers) {
+          glow.heatHaze(pC(at).x, pC(at).y, R * 1.2, c.hazeTtl ?? Math.min(1500, s.dur), c.hazePow ?? 24);
+          glow.plasmaBurst(pal0.mid, pal0.core, c.plasma ?? 0.9, Math.min(1300, s.dur));
+        }
+        break;
+      }
+      case "bolt": {
+        glow.flash(c.flashCol || "#dfeeff", c.flashPeak ?? 0.4, 180);
+        if (c.chroma !== false) glow.chroma(c.chromaPx ?? 9, 300);
+        glow.addLight(pC(eff.to).x, pC(eff.to).y, pal0.core, F(6), 360, 0.55);
+        glow.addLight(pC(eff.from).x, pC(eff.from).y, pal0.mid, F(4), 260, 0.4);
+        break;
+      }
+      case "column": {
+        glow.addLight(pC(eff.to).x, pC(eff.to).y, glowCol, F(s.widthFt ?? 8) * 1.4, s.dur * 0.6, 0.55);
+        if (pal0 === pal("radiant") || pal0 === pal("holy")) glow.godray(pC(eff.to).x, pC(eff.to).y - F(20), { parallel: false, alpha: 0.16, ttl: Math.min(1400, s.dur) });
+        break;
+      }
+      case "rays": {
+        const cc = pC(at);
+        glow.addLight(cc.x, cc.y, glowCol, F(s.radiusFt ?? 24) * 0.9, s.dur * 0.8, 0.6);
+        glow.godray(cc.x, cc.y, { parallel: false, gain: 0.5, alpha: 0.2, ttl: Math.min(1500, s.dur + 200) });
+        glow.flash(pal0.mid, 0.24, 280);
+        break;
+      }
+      case "line": {
+        const a = pC(eff.from), b = pC(eff.to);
+        glow.addLight((a.x + b.x) / 2, (a.y + b.y) / 2, glowCol, Math.hypot(b.x - a.x, b.y - a.y) * 0.32, s.dur * 0.6, 0.45);
+        if (pal0 === pal("radiant") || pal0 === pal("holy")) glow.godray(a.x, a.y, { parallel: true, angle: Math.atan2(b.y - a.y, b.x - a.x) * 180 / Math.PI, alpha: 0.16, ttl: Math.min(1400, s.dur) });
+        break;
+      }
+      case "flamewall": {
+        const a = pC(eff.from), b = pC(eff.to);
+        const mid = { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        glow.addLight(mid.x, mid.y, pal0.core, Math.hypot(b.x - a.x, b.y - a.y) * 0.4, s.dur * 0.5, 0.45);
+        glow.heatHaze(mid.x, mid.y, Math.hypot(b.x - a.x, b.y - a.y) * 0.5, Math.min(2200, s.dur), 18);
+        break;
+      }
+      case "cone": {
+        const a = pC(eff.from), b = pC(eff.to);
+        glow.addLight(b.x, b.y, glowCol, F(s.lengthFt ?? 15) * 0.45, s.dur * 0.6, 0.4);
+        if (pal0 === pal("fire")) glow.heatHaze((a.x + b.x) / 2, (a.y + b.y) / 2, F(s.lengthFt ?? 15) * 0.5, Math.min(1400, s.dur), 16);
+        break;
+      }
+      case "motes": {
+        glow.addLight(pC(at).x, pC(at).y, pal0.core, F(s.radiusFt ?? 5) * 1.2, s.dur * 0.6, 0.35);
+        break;
+      }
+      case "quake": {
+        glow.shock(pC(eff.to).x, pC(eff.to).y, { amplitude: 30, wavelength: 140, ttl: 1100, radius: F(s.radiusFt ?? 20) * 3 });
+        break;
+      }
+      case "implode": {
+        glow.addLight(pC(at).x, pC(at).y, glowCol, F(s.radiusFt ?? 8) * 0.9, s.dur, 0.4);
+        break;
+      }
+      case "rollball": {
+        glow.addLight(pC(eff.to).x, pC(eff.to).y, pal0.core, F(6), s.dur, 0.4);
+        break;
+      }
+      case "dart":
+      case "projectile": {
+        glow.addLight(pC(eff.to).x, pC(eff.to).y, pal0.mid, F(5), 260, 0.4);
+        break;
+      }
     }
   }
 
@@ -386,20 +527,28 @@ export function createFx(canvas, view) {
     },
     burst(s, t, eff) {
       const c = P(s.at === "from" ? eff.from : eff.to);
-      const R = F(s.radiusFt ?? 10);
+      const R = F(s.radiusFt ?? 10) * (s.scale ?? 1);
       // a fire burst scorches the ground it sits on — a dark foreshortened
       // ellipse under the blast that lingers as the flames rise away
       if (s.embers) {
         const sc = ease.out(Math.min(1, t * 2));
         groundShadow(c.x, c.y, R * 0.9 * sc, (1 - t) * 0.5);
       }
-      glowCircle(c.x, c.y, R * ease.out(t) * (s.scale ?? 1), eff.palette, (1 - t) * 0.9);
+      // the blast body: expands out, fades — but holds brightness a touch longer
+      glowCircle(c.x, c.y, R * ease.out(t), eff.palette, (1 - t * 0.72) * 0.92);
+      // a white-hot core that FLASHES at detonation then collapses — the pop
+      const hot = Math.max(0, 1 - t * 3.2);
+      if (hot > 0) {
+        const white = { core: "#ffffff", mid: eff.palette.core, edge: eff.palette.mid, glow: eff.palette.glow };
+        glowCircle(c.x, c.y, R * (0.28 + 0.32 * ease.out(t)), white, hot);
+      }
       if (t < 0.15 && !s._spawned) {
         s._spawned = true;
         const rf = s.radiusFt ?? 10;
         spawnParticles(s.particles ?? 50, s.at === "from" ? eff.from : eff.to, {
           speed: [rf * 1.2, rf * 3], life: [350, 900],
-          size: [2, 6], palette: eff.palette, drag: 0.88,
+          size: s.embers ? [3, 8] : [2, 6], palette: eff.palette, drag: 0.88,
+          kind: s.embers ? "ember" : "glow", smoke: !!s.embers,
           // embers loft into the air (real z-arc + shadow); plain bursts stay flat
           height: !!s.embers, vz: s.embers ? undefined : 0, zg: s.embers ? 24 : 0,
         });
@@ -479,18 +628,26 @@ export function createFx(canvas, view) {
       ctx.globalAlpha = 1;
     },
     bolt(s, t, eff) {
-      if (t > 0.9) return;
       const a = P(eff.from), b = P(eff.to);
-      // `steady` keeps one jagged shape for the whole flash (always readable);
-      // otherwise the path re-rolls each frame for a live electric flicker.
-      if (!s._paths || (!s.steady && Math.random() < 0.35)) s._paths = jaggedPath(a, b, F(s.jagFt ?? 4), s.forks ?? 3);
-      ctx.globalAlpha = s.steady ? 0.95 : 0.55 + Math.random() * 0.45;
-      ctx.lineCap = "round";
-      ctx.shadowColor = eff.palette.glow;
-      ctx.shadowBlur = 18;
-      for (const [w, col] of [[5, eff.palette.mid], [2, eff.palette.core]]) {
-        ctx.strokeStyle = col;
-        ctx.lineWidth = w;
+      const cs = view.cellPx() / 70;
+      // a hard white-hot strike that decays into a flickering afterglow tail
+      const flash = t < 0.12 ? 1 : Math.max(0, 1 - (t - 0.12) / 0.88);
+      if (flash <= 0) return;
+      // steady bolts hold their shape (readable); live bolts re-roll for crackle
+      if (!s._paths || Math.random() < (s.steady ? 0.14 : 0.5)) s._paths = jaggedPath(a, b, F(s.jagFt ?? 5), s.forks ?? 4);
+      ctx.save();
+      ctx.lineCap = "round"; ctx.lineJoin = "round";
+      ctx.shadowColor = eff.palette.glow; ctx.shadowBlur = 24 * cs;
+      const jitter = s.steady ? 1 : 0.6 + Math.random() * 0.4;
+      // three stacked strokes: a wide coloured glow, a mid bolt, a thin white core
+      const layers = [
+        [Math.max(3, 12 * cs), eff.palette.edge, 0.45],
+        [Math.max(2, 6 * cs), eff.palette.mid, 0.85],
+        [Math.max(1.2, 2.4 * cs), eff.palette.core, 1],
+      ];
+      for (const [w, col, al] of layers) {
+        ctx.globalAlpha = al * flash * jitter;
+        ctx.strokeStyle = col; ctx.lineWidth = w;
         for (const path of s._paths) {
           ctx.beginPath();
           ctx.moveTo(path[0].x, path[0].y);
@@ -498,7 +655,7 @@ export function createFx(canvas, view) {
           ctx.stroke();
         }
       }
-      ctx.shadowBlur = 0;
+      ctx.restore();
       ctx.globalAlpha = 1;
     },
     column(s, t, eff) {
@@ -1063,14 +1220,9 @@ export function createFx(canvas, view) {
   }
 
   function frame(now) {
-    // keep the webgl offscreen the same device size as the fx canvas (the
-    // board resizes fxCanvas on layout/zoom-of-window/DPR changes)
-    if (webgl && offscreen && (offscreen.width !== canvas.width || offscreen.height !== canvas.height)) {
-      offscreen.width = Math.max(1, canvas.width);
-      offscreen.height = Math.max(1, canvas.height);
-      ctx = offscreen.getContext("2d");
-      try { glow.resize(offscreen.width, offscreen.height); } catch { /* fine */ }
-    }
+    // keep the GL layer the same device size as the fx canvas (the board resizes
+    // fxCanvas on layout / window-zoom / DPR changes). resize() is idempotent.
+    if (webgl && glow) { try { glow.resize(canvas.width, canvas.height); } catch { /* fine */ } }
     const W = ctx.canvas.width, H = ctx.canvas.height;
 
     // fx-canvas fallback shake: a decaying random offset that settles to 0
@@ -1091,7 +1243,11 @@ export function createFx(canvas, view) {
       for (const s of eff.stages) {
         const t = (now - eff.t0 - s.delay) / s.dur;
         if (t < 0) { alive = true; continue; }
-        if (t <= 1) { alive = true; STAGE[s.type]?.(s, t, eff); }
+        if (t <= 1) {
+          alive = true;
+          if (!s._cineFired) { s._cineFired = true; try { autoCine(s, eff); } catch { /* never break the show */ } }
+          STAGE[s.type]?.(s, t, eff);
+        }
       }
       return alive;
     });
@@ -1133,9 +1289,11 @@ export function createFx(canvas, view) {
 
     ctx.globalCompositeOperation = "source-over";
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    // hand the freshly-painted offscreen to the GPU bloom layer
+    // hand the freshly-painted offscreen to the GPU compositor (bloom, particles,
+    // dynamic light, per-cast post fx). It advances its own GPU-only content too.
     if (webgl && glow) glow.present();
-    if (effects.length || particles.length || shaking) requestAnimationFrame(frame);
+    const gpuBusy = webgl && glow && glow.busy && glow.busy();
+    if (effects.length || particles.length || shaking || gpuBusy) requestAnimationFrame(frame);
     else running = false;
   }
 
@@ -1628,12 +1786,23 @@ export function createFx(canvas, view) {
     // area
     if (aoe) {
       const size = aoe.size || 15;
+      const damaging = !!sp.damage;
       if (aoe.type === "sphere" || aoe.type === "cylinder") {
-        if (!sp.attack && targeted) stages.push(A({ type: "projectile", dur: 420, size: 8, arc: 0.3 }));
-        const d0 = stages.length ? 420 : 0;
-        stages.push(A({ type: "burst", delay: d0, dur: 650, radiusFt: size, particles: Math.min(90, size * 3) }));
-        stages.push(A({ type: "ring", delay: d0, dur: 600, radiusFt: size, expand: true }));
-        stages.push(A({ type: "ring", delay: d0 + 600, dur: 3000, radiusFt: size, linger: true, dashed: true }));
+        if (damaging) {
+          // a real blast: optional lob-in, detonation, expanding + lingering rings
+          if (!sp.attack && targeted) stages.push(A({ type: "projectile", dur: 420, size: 8, arc: 0.3 }));
+          const d0 = stages.length ? 420 : 0;
+          stages.push(A({ type: "burst", delay: d0, dur: 650, radiusFt: size, particles: Math.min(90, size * 3) }));
+          stages.push(A({ type: "ring", delay: d0, dur: 600, radiusFt: size, expand: true }));
+          stages.push(A({ type: "ring", delay: d0 + 600, dur: 3000, radiusFt: size, linger: true, dashed: true }));
+        } else {
+          // a non-damaging area (detection / ward / control): a calm field REVEAL,
+          // not an explosion — an expanding then lingering outline sized to the
+          // true footprint, with a soft school-flavoured accent at the centre.
+          stages.push(A({ type: "ring", dur: 700, radiusFt: size, expand: true }));
+          stages.push(A({ type: "ring", delay: 200, dur: 3000, radiusFt: size, linger: true, dashed: true }));
+          stages.push(...schoolFlourish(sp.school).map((st) => A({ ...st, radiusFt: Math.min(st.radiusFt ?? 5, size * 0.6) })));
+        }
       } else if (aoe.type === "cone") {
         stages.push(A({ type: "cone", dur: 850, lengthFt: size }));
       } else if (aoe.type === "line") {
@@ -1753,7 +1922,16 @@ export function createFx(canvas, view) {
         : [A({ type: "slash", dur: 400 })];
       play(stages, from || to, to, p);
     },
-    clear() { effects = []; particles = []; },
+    clear() {
+      effects = []; particles = [];
+      try { glow?.clear?.(); } catch { /* fine */ }
+      // wipe the offscreen so a stale frame doesn't linger under the GL layer
+      try {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+        if (webgl && glow) glow.present();
+      } catch { /* fine */ }
+    },
     /* release the GPU bloom layer + observer. Called automatically when the
        board tears down the fx canvas; safe to call directly too. */
     destroy() { fxDestroy(); },
