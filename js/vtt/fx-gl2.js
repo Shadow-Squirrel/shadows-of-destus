@@ -38,6 +38,7 @@ uniform float uScale;   // billboard half-extent, px
 uniform float uT;       // seconds since detonation
 uniform vec3  uColA;    // inner (hot) tint
 uniform vec3  uColB;    // outer (cool) tint
+uniform int   uStyle;   // 0 fire · 1 frost · 2 spark(lightning) · 3 holy(radiant) · 4 void(necrotic)
 out vec4 o;
 
 float hash13(vec3 p){ p=fract(p*0.3183099+0.1); p*=17.0; return fract(p.x*p.y*p.z*(p.x+p.y+p.z)); }
@@ -59,22 +60,41 @@ vec3 fireRamp(float t){
   c = mix(c, uColB,                                    smoothstep(0.25,0.52,t));
   c = mix(c, mix(uColB,uColA,0.6),                     smoothstep(0.48,0.72,t));
   c = mix(c, uColA,                                    smoothstep(0.66,0.88,t));
-  c = mix(c, mix(uColA,vec3(1.0),0.7),                 smoothstep(0.86,1.0,t)); // near-white core
+  float wf = (uStyle==1 || uStyle==4) ? 0.22 : 0.7;    // frost/void keep their colour (not white-hot)
+  c = mix(c, mix(uColA,vec3(1.0),wf),                  smoothstep(0.86,1.0,t));
   return c;
 }
 
-float fireField(vec3 p, float R, float t, out float heat){
+// One volumetric field, shaped per style. All share the raymarch below; they
+// differ in rise, turbulence frequency, ridged (crystal/filament) sharpening,
+// swirl, vertical bias and threshold — enough to read as fire vs frost vs
+// lightning vs a shaft of holy light vs a swirling necrotic implosion.
+float field(vec3 p, float R, float t, out float heat){
   float r=length(p);
-  vec3 q=p/R; vec3 fp=q*2.5; fp.y-=t*1.15;
+  vec3 q=p/R;
+  float rise=1.15, freq=2.5, ridged=0.0, swirl=0.0, bulgeY=0.18, thr=0.44;
+  if(uStyle==1){ rise=0.30; freq=3.3; ridged=0.55; bulgeY=-0.04; thr=0.46; }   // frost: spreads, crystalline
+  else if(uStyle==2){ rise=0.45; freq=5.2; ridged=1.0; bulgeY=0.02; thr=0.55; }// spark: thin bright filaments
+  else if(uStyle==3){ rise=0.85; freq=1.9; ridged=0.0; bulgeY=0.05; thr=0.40; }// holy: smooth, tall
+  else if(uStyle==4){ rise=0.20; freq=2.8; ridged=0.45; swirl=2.4; bulgeY=0.0; thr=0.46; } // void: swirl
+  vec3 fp=q*freq; fp.y-=t*rise;
+  if(swirl>0.0){ float a=swirl*(t*0.7+q.y*0.7); float c=cos(a),s=sin(a); fp.xz=mat2(c,-s,s,c)*fp.xz; }
   float w1=fbm(fp+vec3(0.0,t*0.6,1.7));
   float w2=fbm(fp*1.3+vec3(5.2,t*0.4,-1.1));
   vec3 warp=vec3(w1,w2,w1-w2)-0.5;
   float n=fbm(fp+warp*1.6);
-  float bulge=R*(1.0+0.18*smoothstep(0.0,R*1.6,p.y));
+  if(ridged>0.0){ float rn=1.0-abs(2.0*n-1.0); n=mix(n, rn*rn, ridged); }      // ridges → shards/bolts
+  float bulge=R*(1.0+bulgeY*smoothstep(0.0,R*1.6,p.y));
   float sphere=1.0-smoothstep(R*0.30,bulge,r);
-  float dens=clamp(sphere*(0.5+1.0*n)-0.44,0.0,1.0);
-  float h=(1.0-r/(R*1.3))-0.22*smoothstep(0.0,R*1.7,p.y)+0.30*n;
-  h-=t*0.22; heat=clamp(h,0.0,1.0);
+  if(uStyle==3){                                                               // holy: add a vertical shaft
+    float rad=length(p.xz);
+    float col=(1.0-smoothstep(R*0.12,R*0.85,rad))*(1.0-smoothstep(R*2.4,R*3.1,abs(p.y-R*0.7)));
+    sphere=max(sphere, col);
+  }
+  float dens=clamp(sphere*(0.5+1.0*n)-thr,0.0,1.0);
+  float h=(1.0-r/(R*1.3))-0.22*smoothstep(0.0,R*1.7,p.y)+0.30*n; h-=t*0.22;
+  if(uStyle==1) h*=0.92;                                                       // frost reads cooler
+  heat=clamp(h,0.0,1.0);
   return dens;
 }
 
@@ -93,6 +113,10 @@ void main(){
   float R=0.6+2.7*grow;
   vec3 bc=vec3(0.0,0.7+1.05*grow,0.0);
   float fade=exp(-t*1.05);
+  if(uStyle==1){ R=0.6+3.2*grow; bc.y=0.5+0.55*grow; }     // frost spreads wider + lower
+  else if(uStyle==2){ R=0.5+2.2*grow; fade=exp(-t*1.7); }  // lightning tighter, snaps out fast
+  else if(uStyle==3){ bc.y=0.9+1.4*grow; }                 // holy rises into a taller shaft
+  else if(uStyle==4){ R=0.6+2.4*grow; }                    // void
 
   vec3 oc=ro-bc; float b=dot(oc,rd); float c2=dot(oc,oc)-(R*1.9)*(R*1.9);
   float disc=b*b-c2;
@@ -105,7 +129,7 @@ void main(){
       float tc=t0+dt*jit;
       for(int i=0;i<40;i++){
         if(tc>t1||trans<0.02) break;
-        vec3 pp=ro+rd*tc-bc; float heat; float dens=fireField(pp,R,t,heat);
+        vec3 pp=ro+rd*tc-bc; float heat; float dens=field(pp,R,t,heat);
         if(dens>0.002){
           vec3 col=fireRamp(heat)*(0.55+1.7*heat);
           float a=clamp(dens*dt*2.6,0.0,1.0);
@@ -118,8 +142,8 @@ void main(){
 
   // detonation flash core (local to the billboard) + a soft warm bloom.
   // Both fall to 0 by dc=1.0 so nothing lands on the scissor-box edge.
-  float fl=exp(-t*8.5); float dc=length(uv);
-  acc+=uColA*fl*smoothstep(1.0,0.0,dc)*1.6;
+  float fl=exp(-t*(uStyle==2?11.0:8.5)); float dc=length(uv);
+  acc+=uColA*fl*smoothstep(1.0,0.0,dc)*(uStyle==2?2.1:1.6);
   acc+=uColB*fl*0.22*smoothstep(1.0,0.0,dc);
 
   acc=acc/(1.0+acc*0.34)*1.35;
@@ -190,7 +214,9 @@ export function createVolLayer(source, wrap, opts = {}) {
     t: gl.getUniformLocation(prog, "uT"),
     colA: gl.getUniformLocation(prog, "uColA"),
     colB: gl.getUniformLocation(prog, "uColB"),
+    style: gl.getUniformLocation(prog, "uStyle"),
   };
+  const STYLE = { fire: 0, frost: 1, spark: 2, holy: 3, void: 4 };
 
   // additive stacking of multiple simultaneous blasts
   gl.disable(gl.DEPTH_TEST);
@@ -228,10 +254,12 @@ export function createVolLayer(source, wrap, opts = {}) {
        x,y      : centre in device px (canvas coords, same space as the fx canvas)
        radiusPx : the effect radius in px (e.g. feetToPx(radiusFt))
        t        : progress 0..1 over the stage; mapped to the shader's timeline
-       opts     : { colHot, colCool, spanSec, spread } */
+       opts     : { style, colHot, colCool, spanSec, spread }
+       style: "fire" | "frost" | "spark" | "holy" | "void" (or its int) */
   function fire(x, y, radiusPx, t, opts = {}) {
+    const styleInt = typeof opts.style === "number" ? opts.style : (STYLE[opts.style] ?? 0);
     const spanSec = opts.spanSec ?? 1.5;
-    const spread = opts.spread ?? 1.55;           // fire billows a bit past the AoE ring
+    const spread = opts.spread ?? (styleInt === 3 ? 2.4 : 1.55); // holy shaft needs headroom
     const scale = Math.max(4, radiusPx * spread);
     const colA = toRGB(opts.colHot, [1.0, 0.86, 0.45]);
     const colB = toRGB(opts.colCool, [1.0, 0.42, 0.06]);
@@ -246,6 +274,7 @@ export function createVolLayer(source, wrap, opts = {}) {
     gl.uniform1f(U.t, Math.max(0, t) * spanSec);
     gl.uniform3fv(U.colA, colA);
     gl.uniform3fv(U.colB, colB);
+    gl.uniform1i(U.style, styleInt);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 

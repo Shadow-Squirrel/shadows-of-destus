@@ -50,6 +50,14 @@ const PALETTES = {
 };
 const pal = (key) => PALETTES[key] || PALETTES.evocation;
 
+// damage type → volumetric style for the raw-WebGL2 layer (fx-gl2.js). Only
+// damage spells with a known element get an auto volumetric blast; the shape
+// detail (bolts, shards, cones) still comes from the 2-D art beneath.
+const VSTYLE = {
+  fire: "fire", cold: "frost", lightning: "spark", radiant: "holy", necrotic: "void",
+  acid: "frost", poison: "frost", thunder: "frost", force: "spark", psychic: "void",
+};
+
 const GOLD = "#d4a531";                 // theme accent — the size-label colour
 const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
 
@@ -558,10 +566,11 @@ export function createFx(canvas, view) {
       const R = F(s.radiusFt ?? 20) * (s.scale ?? 1);
       const p = eff.palette || {};
       vol.fire(c.x, c.y, R, t, {
+        style: s.style,                        // "fire"|"frost"|"spark"|"holy"|"void"
         colHot: s.colHot || p.core,
         colCool: s.colCool || p.mid,
-        spanSec: s.spanSec ?? 1.5,
-        spread: s.spread ?? 1.5,
+        spanSec: s.spanSec,                    // undefined → fx-gl2 default
+        spread: s.spread,                      // undefined → fx-gl2 per-style default
       });
     },
     burst(s, t, eff) {
@@ -1957,6 +1966,19 @@ export function createFx(canvas, view) {
       const lblText = aoeLabelText(spec.aoe);
       if (lblText && !stages.some((s) => s.type === "label"))
         stages.push(A({ type: "label", shape: spec.aoe.type, sizeFt: spec.aoe.size, text: lblText, linger: true, delay: 300, dur: 2600 }));
+      // Auto volumetric blast: mirror the primary impact burst, styled by damage
+      // type. Hand-tuned signatures that already carry a `vfire` stage (the fire
+      // family) are left untouched; every other elemental damage spell with an
+      // impact burst gets a matching 3-D blaze for free.
+      const vstyle = VSTYLE[spec.damage && spec.damage.type];
+      if (vstyle && !stages.some((s) => s.type === "vfire")) {
+        const bursts = stages.filter((s) => s.type === "burst" && (s.radiusFt ?? 0) >= 3);
+        if (bursts.length) {
+          const b = bursts.reduce((a, c) => ((c.radiusFt ?? 0) > (a.radiusFt ?? 0) ? c : a));
+          stages.push(A({ type: "vfire", style: vstyle, at: b.at, delay: Math.max(0, (b.delay ?? 0) - 10),
+            dur: Math.max(b.dur ?? 700, 1000), radiusFt: b.radiusFt ?? 10, scale: b.scale }));
+        }
+      }
       const base = paletteFor(spec);
       // prismatic-style stages may carry their own palette
       const byPal = new Map();
