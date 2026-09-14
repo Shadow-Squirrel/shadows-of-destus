@@ -29,6 +29,49 @@ Build-on / feasibility:
   cap pattern** (per-DM + global monthly caps, prepaid provider ceiling).
 - Output is **editable**, not final — the DM tweaks before running it.
 
+### AI NPC generator
+DM types e.g. *"a nervous goblin merchant who secretly works for the thieves
+guild"* → Onyx produces a full NPC: name, race, occupation, personality,
+**secret**, **voice notes**, and an **inventory** (item + price). Then
+**"Generate Portrait"** (reuses FLUX) and **"Add NPC to campaign"** (drops it
+into the codex/roster). Editable. Same cost-caps as the image/text AI.
+
+### AI monster generator
+DM types e.g. *"a CR 7 undead crocodile boss"* → Onyx builds a statblock
+(name, CR, HP, AC, actions, legendary actions, traits like "Death Roll",
+"Swamp Ambush"). Then **"Generate Token"** → it's playable on the VTT (same
+token/HP/initiative shape as SRD monsters). Editable before use.
+
+## Homebrew & in-play tools
+- **Make homebrew stupidly easy** — one-click **Create Monster / Spell / Item /
+  Class / Subclass / Race-Species / Feat** with a **structured form editor**
+  (fields + checkboxes, e.g. Name / Level / School / Range / Damage / Damage
+  Type / ☑ Upcast → +1d8 per level), NOT a scripting language. Output is
+  **immediately usable by character sheets and the VTT**. Build-on: the model
+  already stores `{kind:"custom"}` races/subclasses/backgrounds + custom
+  spells/feats/attacks/items — these editors are friendly front-ends onto that
+  same shape, and the marketplace can sell the results.
+- **Smart combat (assist, don't automate)** — when the Fighter attacks
+  "Longsword → Goblin #3", Onyx rolls to-hit (🎲 19+8=27 HIT), rolls damage
+  (🎲 7+5=12), then **asks "Apply 12 damage? [Apply]"** — the DM stays in
+  control (confirm, not auto-apply). Reduces bookkeeping without taking over.
+  Build-on: the VTT already has attack targeting, dice, token HP, and the
+  cast→damage flow — this adds the guided "roll → confirm → apply" loop.
+
+## Community & network effects
+- **LFG ("Find a Game")** — a game-discovery board: players browse open
+  campaigns filtered by **System, Experience (beginner-friendly…), Day, Time,
+  Style (☑ roleplay / ☑ combat / hardcore), Voice (Discord…), Cost, Age
+  (18+…)** → **Join Campaign** (ties into the invite/redeem system already
+  built). Strong network effect; D&D Beyond put LFG on its 2026 roadmap, so
+  discovery is strategically validated. Needs a public "listing" opt-in per
+  campaign + moderation.
+- **Deep Discord integration** — embrace Discord rather than compete: connect a
+  Discord account, then Onyx posts to the server: game reminders ("⚔ Game
+  Tonight — Curse of the Crimson King, 7:00 PM [Join Session]"), **session
+  recaps** ("📖 Session 14 Recap Available"), and optionally dice results /
+  character updates. Discord OAuth + a bot/webhook; per-campaign channel config.
+
 ## Legal & trust
 - **Privacy Policy / Terms / DMCA process** — Terms, Privacy, and Licenses pages
   already exist as reviewed-templates (`terms.html`, `privacy.html`,

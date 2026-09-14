@@ -28,6 +28,13 @@ create or replace function auth.uid() returns uuid language sql stable as $$
   select nullif(auth.jwt()->>'sub', '')::uuid
 $$;
 
+-- Tables created LATER (by schema.sql + migrations, run as postgres) inherit
+-- DML grants for authenticated — as in a real Supabase project (RLS gates it).
+alter default privileges for role postgres in schema public
+  grant select, insert, update, delete on tables to authenticated;
+alter default privileges for role postgres in schema public
+  grant usage, select on sequences to authenticated;
+
 -- storage tables — only the columns the RLS policies actually read
 create table if not exists storage.buckets (
   id text primary key,
@@ -42,6 +49,17 @@ create table if not exists storage.objects (
   name text
 );
 alter table storage.objects enable row level security;
+
+-- storage.foldername(name) → path segments (Supabase provides this in prod)
+create or replace function storage.foldername(name text) returns text[]
+language sql immutable as $$ select string_to_array(coalesce(name, ''), '/') $$;
+
+-- In prod, authenticated/anon can use the auth schema (RLS policies call
+-- my_email() → auth.jwt() when evaluating direct queries under RLS).
+grant usage on schema auth to authenticated, anon;
+grant execute on all functions in schema auth to authenticated, anon;
+grant usage on schema storage to authenticated, anon;
+grant select, insert, update, delete on storage.objects to authenticated;
 
 -- the realtime publication schema.sql adds tables to
 do $$ begin create publication supabase_realtime; exception when duplicate_object then null; end $$;
