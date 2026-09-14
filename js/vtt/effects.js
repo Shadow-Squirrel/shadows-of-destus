@@ -1528,9 +1528,13 @@ export function createFx(canvas, view) {
     /* ── force / arcane ── */
     "magic-missile": () => [0, 120, 240].map((d, i) =>
       A({ type: "dart", delay: d, dur: 620, size: 6, phase: i * 2.1 })
-    ).concat([A({ type: "burst", delay: 760, dur: 420, radiusFt: 4, particles: 22 })]),
+    ).concat([
+      A({ type: "vfire", style: "spark", delay: 740, dur: 560, radiusFt: 4, spanSec: 0.85 }),
+      A({ type: "burst", delay: 760, dur: 420, radiusFt: 4, particles: 22 }),
+    ]),
     "eldritch-blast": () => [
       A({ type: "bolt", dur: 420 }),
+      A({ type: "vfire", style: "spark", delay: 290, dur: 640, radiusFt: 6, spanSec: 0.95 }),
       A({ type: "burst", delay: 300, dur: 450, radiusFt: 5, particles: 26 }),
     ],
     "disintegrate": () => [
@@ -1572,11 +1576,13 @@ export function createFx(canvas, view) {
     /* ── radiant / holy ── */
     "guiding-bolt": () => [
       A({ type: "projectile", dur: 550, size: 11, arc: 0.15 }),
+      A({ type: "vfire", style: "holy", delay: 545, dur: 1000, radiusFt: 6, spanSec: 1.3 }),
       A({ type: "burst", delay: 550, dur: 600, radiusFt: 6, particles: 40 }),
       A({ type: "sparkles", delay: 550, dur: 1400 }),
     ],
     "sacred-flame": () => [
       A({ type: "column", dur: 900, heightFt: 30, widthFt: 8 }),
+      A({ type: "vfire", style: "holy", delay: 60, dur: 1000, radiusFt: 5, spanSec: 1.3 }),
       A({ type: "sparkles", delay: 250, dur: 900 }),
     ],
     "sunbeam": (sp) => [
@@ -1585,6 +1591,8 @@ export function createFx(canvas, view) {
     ],
     "sunburst": (sp) => [
       A({ type: "rays", dur: 900, radiusFt: sz(sp, 60) * 0.9, count: 16 }),
+      // a huge golden-white radiant SPHERE (fire-shape, radiant colours) — not the holy pillar
+      A({ type: "vfire", style: "fire", dur: 1500, radiusFt: sz(sp, 60), colHot: "#fffbe6", colCool: "#ffd36a", spanSec: 1.85, spread: 1.7 }),
       A({ type: "burst", dur: 800, radiusFt: sz(sp, 60), particles: 90 }),
       A({ type: "ring", dur: 800, radiusFt: sz(sp, 60), expand: true }),
     ],
