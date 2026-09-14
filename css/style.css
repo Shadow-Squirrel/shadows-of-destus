@@ -538,3 +538,37 @@ svg.die.landed { animation: die-land .38s cubic-bezier(.2, 2.1, .4, 1); }
 .invite-link:read-only { cursor: text; }
 /* the public join page reuses the .gate card; keep it centered like the login gate */
 
+/* ── Header profile link + gate "forgot password" ── */
+.who-profile {
+  text-decoration: none; color: var(--muted);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  padding: 3px 9px; font-size: 13px; line-height: 1.2; white-space: nowrap;
+  transition: color var(--dur) var(--ease), border-color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.who-profile:hover { color: var(--gold); border-color: var(--gold-soft); background: rgba(212,165,49,.08); }
+/* a button that reads as a plain inline link (gate "forgot password?") */
+.linklike {
+  display: inline-block; margin-top: 12px;
+  background: none; border: none; padding: 0; cursor: pointer;
+  color: var(--muted); font-family: var(--font-body); font-size: 14px; text-decoration: underline;
+  transition: color var(--dur) var(--ease);
+}
+.linklike:hover { color: var(--gold); }
+
+/* ── Profile page ── */
+.pf-avatar-row { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
+.pf-avatar {
+  width: 112px; height: 112px; flex: 0 0 auto; object-fit: cover;
+  border-radius: 50%; border: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--panel-2), var(--panel));
+  box-shadow: var(--sh-2), var(--hairline);
+}
+.pf-avatar-ph {
+  display: flex; align-items: center; justify-content: center;
+  font-family: var(--font-display); font-weight: 800; font-size: 44px; color: var(--gold-soft);
+}
+@media (max-width: 480px) {
+  .pf-avatar { width: 88px; height: 88px; }
+  .pf-avatar-ph { font-size: 34px; }
+}
+

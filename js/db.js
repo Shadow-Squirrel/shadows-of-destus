@@ -1016,3 +1016,137 @@ export const party = {
     await q(sb.from("party_characters").delete().eq("id", id));
   },
 };
+
+/* ═══ Profiles + account (avatar, contact, password) ═══
+   Every signed-in user has ONE profile row (keyed by their email). You can
+   read your own and your campaign-mates' public bits; you can write only
+   your own — the DATABASE (RLS + save_profile) enforces all of that, this
+   store just calls it. Passwords / resets are Supabase Auth, not SQL.
+
+   Demo mode keeps a fake in-memory profile and turns the auth calls into a
+   friendly "not in demo" error (guard() surfaces it as a toast). If the
+   profiles migration isn't applied yet, reads return null and writes throw a
+   clear message instead of taking the page down. */
+let demoProfile = {
+  email: "dm@example.com", display_name: "You (DM preview)", avatar_path: null,
+  contact: { discord: "", timezone: "", pronouns: "" },
+};
+
+// The signed-in user's email, lowercased — the same identity my_email()
+// uses in the database, so avatar folders and profile rows line up.
+async function ownEmail() {
+  if (!sb) return "dm@example.com";
+  const { data } = await sb.auth.getUser();
+  return (data?.user?.email || "").toLowerCase();
+}
+
+export const profile = {
+  // The signed-in user's own profile row, or null if they haven't saved one.
+  mine: async () => {
+    if (!sb) return { ...demoProfile };
+    try {
+      const email = await ownEmail();
+      const rows = await q(sb.from("profiles").select("*").ilike("email", email).limit(1));
+      return rows[0] || null;
+    } catch (e) { if (notThere(e)) return null; throw e; }
+  },
+
+  // Save display name + contact. avatar_path is left null so save_profile
+  // KEEPS the current avatar (see the SQL's coalesce). Returns the row.
+  save: async ({ displayName, contact }) => {
+    if (!sb) {
+      demoProfile = { ...demoProfile, display_name: displayName ?? "", contact: contact || {} };
+      return { ...demoProfile };
+    }
+    try {
+      return await q(sb.rpc("save_profile", {
+        p_display_name: displayName ?? null,
+        p_avatar_path: null,
+        p_contact: contact || {},
+      }));
+    } catch (e) {
+      if (notThere(e)) throw new Error("Profiles aren't set up on this database yet.");
+      throw e;
+    }
+  },
+
+  // Upload a new avatar into the user's OWN folder (avatars/<email>/…), then
+  // point the profile at it. save_profile overwrites display_name + contact,
+  // so we read the current row first and pass those back unchanged. Returns
+  // the public URL of the freshly uploaded image.
+  uploadAvatar: async (file) => {
+    if (!sb) throw new Error("Avatar uploads aren't available in demo mode.");
+    const email = await ownEmail();
+    const ext = ((file.name.split(".").pop() || "png").toLowerCase().replace(/[^a-z0-9]/g, "")) || "png";
+    const path = `${email}/avatar-${uid().slice(0, 8)}.${ext}`;
+    try {
+      await q(sb.storage.from("avatars").upload(path, file, { contentType: file.type || "image/png", upsert: false }));
+    } catch (e) {
+      if (notThere(e)) throw new Error("Avatar storage isn't set up on this database yet.");
+      throw e;
+    }
+    let cur = null;
+    try { cur = await profile.mine(); } catch {}
+    await q(sb.rpc("save_profile", {
+      p_display_name: cur?.display_name ?? null,
+      p_avatar_path: path,
+      p_contact: cur?.contact || {},
+    }));
+    return profile.avatarUrl(path);
+  },
+
+  // Public URL for a stored avatar path (null-safe; demo has no storage).
+  avatarUrl: (path) => {
+    if (!path || !sb) return null;
+    const { data } = sb.storage.from("avatars").getPublicUrl(path);
+    return data?.publicUrl || null;
+  },
+
+  /* ── account / auth (thin wrappers over Supabase Auth) ── */
+
+  // Re-authenticate with the CURRENT password first (proves it's really you),
+  // then set the new one. A wrong current password is a clean, specific error.
+  changePassword: async (currentPw, newPw) => {
+    if (!sb) throw new Error("Password changes aren't available in demo mode.");
+    const email = await ownEmail();
+    const { error } = await sb.auth.signInWithPassword({ email, password: currentPw });
+    if (error) throw new Error("Current password is incorrect");
+    await q(sb.auth.updateUser({ password: newPw }));
+  },
+
+  // Email a reset link that lands back on our public reset.html page.
+  sendReset: async (email) => {
+    if (!sb) throw new Error("Password reset isn't available in demo mode.");
+    await q(sb.auth.resetPasswordForEmail(email, { redirectTo: location.origin + "/reset.html" }));
+  },
+
+  // Finish a reset: the recovery link has already signed the user in, so we
+  // just set the new password on the current session.
+  completeReset: async (newPw) => {
+    if (!sb) throw new Error("Password reset isn't available in demo mode.");
+    await q(sb.auth.updateUser({ password: newPw }));
+  },
+
+  // Optional, clearly-separate email change: Supabase sends a confirmation
+  // link to the new address; the change only takes effect once it's clicked.
+  changeEmail: async (newEmail) => {
+    if (!sb) throw new Error("Email changes aren't available in demo mode.");
+    await q(sb.auth.updateUser({ email: newEmail }));
+  },
+
+  // Is there an authenticated session right now? (reset.html uses this to
+  // tell a valid recovery link from an expired/absent one.) Demo: none.
+  hasSession: async () => {
+    if (!sb) return false;
+    const { data } = await sb.auth.getSession();
+    return !!data.session;
+  },
+
+  // supabase-js parses the recovery token from the URL and fires this with
+  // event === 'PASSWORD_RECOVERY'. Returns an unsubscribe function.
+  onPasswordRecovery: (cb) => {
+    if (!sb) return () => {};
+    const { data } = sb.auth.onAuthStateChange((event) => { if (event === "PASSWORD_RECOVERY") cb(); });
+    return () => { try { data.subscription.unsubscribe(); } catch {} };
+  },
+};

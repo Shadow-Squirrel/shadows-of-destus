@@ -11,7 +11,7 @@
 //  ...or null if the visitor was stopped at the gate.
 // ─────────────────────────────────────────────────────────────
 import { CONFIG } from "./config.js";
-import { initDb, isReal, auth, members, campaigns, setCampaign, isLegacy } from "./db.js";
+import { initDb, isReal, auth, members, campaigns, setCampaign, isLegacy, profile } from "./db.js";
 
 /* ── which campaign is the user looking at? (remembered per browser) ── */
 const CAMP_KEY = "sod-campaign";
@@ -173,6 +173,7 @@ function renderGate(main) {
           <span class="muted small" id="g-msg"></span>
         </div>
       </form>
+      <button type="button" class="linklike" id="g-forgot">Forgot password?</button>
     </div>`;
   let modeUp = false;
   const setTab = (up) => {
@@ -183,6 +184,15 @@ function renderGate(main) {
   };
   document.getElementById("tab-in").onclick = () => setTab(false);
   document.getElementById("tab-up").onclick = () => setTab(true);
+  // Forgot password → email a reset link (Supabase Auth). The reset flow
+  // completes on the public reset.html page the link lands on.
+  document.getElementById("g-forgot").onclick = () => guard(async () => {
+    const pre = document.getElementById("g-email").value.trim();
+    const email = (prompt("Enter your account email and we'll send a password-reset link:", pre) || "").trim();
+    if (!email) return;
+    await profile.sendReset(email);
+    toast("Check your email for a reset link.");
+  });
   document.getElementById("gate-form").onsubmit = (e) => {
     e.preventDefault();
     guard(async () => {
@@ -227,6 +237,17 @@ function signOutBtn() {
   return out;
 }
 
+// A small link to the profile/account page, shown in the header for every
+// signed-in user (on every booted page).
+function profileLink() {
+  const a = document.createElement("a");
+  a.href = "./profile.html";
+  a.className = "who-profile";
+  a.title = "Your profile & account";
+  a.textContent = "⚙ Profile";
+  return a;
+}
+
 /* ── boot: call this first on every page ── */
 export async function boot(pageFile, pageTitle) {
   document.title = `${pageTitle} · ${CONFIG.APP_NAME}`;
@@ -240,7 +261,7 @@ export async function boot(pageFile, pageTitle) {
     const currentId = chooseCampaign(list);
     setCampaign(currentId);
     const current = list.find((c) => c.id === currentId);
-    renderHeader(pageFile, [pill("demo mode", "mystic"), campaignSwitcher(list, currentId)], current?.tagline);
+    renderHeader(pageFile, [pill("demo mode", "mystic"), campaignSwitcher(list, currentId), profileLink()], current?.tagline);
     banner(`🧪 <strong>Demo mode</strong> — sample data, and edits vanish on refresh.
       You're previewing as the DM so every control is visible.
       Connect your free database to make it real (README, step 2).`);
@@ -266,6 +287,7 @@ export async function boot(pageFile, pageTitle) {
     renderHeader(pageFile, [
       document.createTextNode(meL.display_name || session.email),
       pill(meL.role === "dm" ? "DM" : "player", meL.role === "dm" ? "gold" : "steel"),
+      profileLink(),
       signOutBtn(),
     ], CONFIG.TAGLINE);
     const allL = await members.list();
@@ -296,6 +318,7 @@ export async function boot(pageFile, pageTitle) {
     campaignSwitcher(myCampaigns, currentId),
     document.createTextNode(me.display_name || session.email),
     pill(me.role === "dm" ? "DM" : "player", me.role === "dm" ? "gold" : "steel"),
+    profileLink(),
     signOutBtn(),
   ], current?.tagline);
 
