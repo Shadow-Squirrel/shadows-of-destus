@@ -3,7 +3,7 @@
 // Every campaign is walled off from every other (the database enforces it);
 // this page is just the controls.
 import { boot, esc, guard, toast, fmtDate } from "../shell.js";
-import { campaigns, members } from "../db.js";
+import { campaigns, members, invites } from "../db.js";
 
 const CAMP_KEY = "sod-campaign";
 const remember = (id) => { try { localStorage.setItem(CAMP_KEY, id); } catch {} };
@@ -130,7 +130,9 @@ async function main() {
         </form>
         <p class="muted small">They visit the site and <strong>Create account</strong> with that exact email.
         Remove them here and their access to this campaign ends immediately.</p>
+        <div id="invite-slot" style="margin-top:14px; border-top:1px solid var(--border-soft); padding-top:12px"></div>
       </div>`;
+    manageInvites(slot.querySelector("#invite-slot"), c);
     const mList = slot.querySelector("#m-list");
     list.forEach((m) => {
       const isSelf = m.email.toLowerCase() === ctx.me.email;
@@ -159,5 +161,71 @@ async function main() {
         manageMembers(slot, c);
       });
     };
+  }
+
+  // Shareable invite LINKS for one campaign (DM-only). A link lets someone
+  // create an account (or sign in) and join without the DM knowing their
+  // email in advance — handy for "send this to the group chat".
+  async function manageInvites(slot, c) {
+    const linkFor = (token) => `${location.origin}/join.html?invite=${token}`;
+    const list = await invites.list(c.id);
+    slot.innerHTML = `
+      <div class="row" style="justify-content:space-between; align-items:baseline">
+        <strong>Invite links</strong>
+        <button class="btn b-new-invite">＋ New invite link</button>
+      </div>
+      <p class="muted small" style="margin:4px 0 0">Anyone with a link can join <strong>${esc(c.name)}</strong>
+      as a player. Share it, and revoke it any time.</p>
+      <div id="invite-list" style="margin-top:10px"></div>`;
+
+    slot.querySelector(".b-new-invite").onclick = () => guard(async () => {
+      const inv = await invites.create(c.id);
+      if (!inv) { toast("Invite links aren't available yet"); return; }
+      toast("Invite link created");
+      manageInvites(slot, c);
+    });
+
+    const listEl = slot.querySelector("#invite-list");
+    if (!list.length) {
+      listEl.innerHTML = `<p class="muted small">No invite links yet.</p>`;
+      return;
+    }
+    list.forEach((inv) => {
+      const url = linkFor(inv.token);
+      const bits = [];
+      bits.push(inv.max_uses == null ? `${inv.uses} used` : `${inv.uses}/${inv.max_uses} used`);
+      if (inv.expires_at) bits.push(`expires ${esc(fmtDate(inv.expires_at))}`);
+      const expired = inv.expires_at && new Date(inv.expires_at) <= new Date();
+      const maxed = inv.max_uses != null && inv.uses >= inv.max_uses;
+      const dead = inv.revoked || expired || maxed;
+      const statusPill = inv.revoked ? `<span class="pill ember">revoked</span>`
+        : expired ? `<span class="pill steel">expired</span>`
+        : maxed ? `<span class="pill steel">used up</span>`
+        : `<span class="pill moss">active</span>`;
+      const row = document.createElement("div");
+      row.style.cssText = "border-top:1px solid var(--border-soft); padding:10px 0";
+      row.innerHTML = `
+        <div class="row" style="justify-content:space-between; align-items:baseline">
+          <span class="row" style="gap:8px">${statusPill}<span class="muted small">${esc(bits.join(" · "))}</span></span>
+          ${inv.revoked ? "" : `<button class="btn-danger b-revoke">Revoke</button>`}
+        </div>
+        <div class="row" style="margin-top:8px; ${dead ? "opacity:.5" : ""}">
+          <input type="text" class="grow invite-link" readonly value="${esc(url)}" />
+          <button class="btn-ghost b-copy" ${dead ? "disabled" : ""}>Copy</button>
+        </div>`;
+      const copy = row.querySelector(".b-copy");
+      if (copy) copy.onclick = () => guard(async () => {
+        try { await navigator.clipboard.writeText(url); toast("Link copied"); }
+        catch { row.querySelector(".invite-link").select(); toast("Press Ctrl/⌘-C to copy"); }
+      });
+      const rev = row.querySelector(".b-revoke");
+      if (rev) rev.onclick = () => guard(async () => {
+        if (!confirm("Turn off this invite link? Anyone still holding it won't be able to join.")) return;
+        await invites.revoke(inv.id);
+        toast("Invite revoked");
+        manageInvites(slot, c);
+      });
+      listEl.appendChild(row);
+    });
   }
 }

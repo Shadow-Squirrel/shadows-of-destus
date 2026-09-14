@@ -66,6 +66,17 @@ const inCampaign = (row) => legacy || (row.campaign_id ?? "demo-a") === campaign
 const now = Date.now();
 const ago = (d) => new Date(now - d * 864e5).toISOString();
 const uid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()));
+// A 128-bit hex token, matching the shape the database mints for invites
+// (demo mode only — real tokens come from the server).
+const hexToken = () => {
+  try {
+    const a = new Uint8Array(16);
+    crypto.getRandomValues(a);
+    return Array.from(a, (b) => b.toString(16).padStart(2, "0")).join("");
+  } catch {
+    return (uid() + uid()).replace(/-/g, "").slice(0, 32);
+  }
+};
 
 const DEMO = {
   members: [
@@ -280,6 +291,8 @@ A sentence each is plenty.
   campaignCharacters: [
     { campaign_id: "demo-a", character_id: "ch-demo-1" },
   ],
+  // invite links (demo mode keeps them in memory)
+  invites: [],
 };
 // a little content in the second demo campaign so switching is visible
 DEMO.sections.push({ id: uid(), campaign_id: "demo-b", sort_order: 1, title: "A Second Table", body: "This is a *different* campaign. Notice the quests, maps, and notes are all its own — nothing leaks between campaigns." });
@@ -322,6 +335,15 @@ export const campaigns = {
       return [];
     }
   },
+  // May the signed-in user create a campaign (become a DM)? Used to decide
+  // whether to show "New campaign" UI. Demo always yes; if the gating
+  // function isn't deployed yet (pre-migration), fall back to permissive so
+  // the old open-creation behavior keeps working.
+  canCreate: async () => {
+    if (!sb) return true;
+    try { return await q(sb.rpc("can_create_campaign")); }
+    catch (e) { if (notThere(e)) return true; throw e; }
+  },
   create: async (name) => {
     if (!sb) {
       const c = { id: uid(), name: name || "New Campaign", tagline: "", owner_email: "dm@example.com", created_at: new Date().toISOString(), myRole: "dm" };
@@ -344,6 +366,66 @@ export const campaigns = {
   remove: async (id) => {
     if (!sb) { DEMO.campaigns = DEMO.campaigns.filter((c) => c.id !== id); return; }
     await q(sb.from("campaigns").delete().eq("id", id));
+  },
+};
+
+/* ═══ Invite links — how a DM adds players ═══
+   A DM mints a random token for a campaign; a friend opens
+   /join.html?invite=<token>, creates an account (or signs in), and is
+   added to that campaign as the invite's role. The database enforces
+   every rule (only a DM may mint/list/revoke; anon may peek at a token's
+   campaign name; redeem requires auth) — this store just calls it.
+
+   Legacy safety: if the invites migration isn't applied yet the RPCs /
+   table won't exist, so each call swallows a "missing" error and returns
+   an empty/null result instead of taking the app down. */
+export const invites = {
+  // Mint a new invite for a campaign you DM. Returns the row (incl. token).
+  create: async (campaignId, { role = "player", expiresAt = null, maxUses = null } = {}) => {
+    if (!sb) {
+      const row = {
+        id: uid(), campaign_id: campaignId, token: hexToken(), role,
+        created_by: "dm@example.com", created_at: new Date().toISOString(),
+        expires_at: expiresAt, max_uses: maxUses, uses: 0, revoked: false,
+      };
+      DEMO.invites.unshift(row);
+      return row;
+    }
+    try {
+      return await q(sb.rpc("create_campaign_invite", {
+        p_campaign: campaignId, p_role: role, p_expires: expiresAt, p_max_uses: maxUses,
+      }));
+    } catch (e) { if (notThere(e)) return null; throw e; }
+  },
+  // Every invite for a campaign you DM (RLS returns only your own).
+  list: async (campaignId) => {
+    if (!sb) return DEMO.invites.filter((i) => i.campaign_id === campaignId);
+    try {
+      return await q(sb.from("campaign_invites").select("*").eq("campaign_id", campaignId).order("created_at", { ascending: false }));
+    } catch (e) { if (notThere(e)) return []; throw e; }
+  },
+  // Turn a link off. (RLS only lets a DM of the campaign do this.)
+  revoke: async (id) => {
+    if (!sb) { const i = DEMO.invites.find((x) => x.id === id); if (i) i.revoked = true; return; }
+    try { await q(sb.from("campaign_invites").update({ revoked: true }).eq("id", id)); }
+    catch (e) { if (!notThere(e)) throw e; }
+  },
+  // Read-only peek at a token (callable before signup, anon) so the join
+  // page can name the campaign. Returns the row or null for a bad/absent token.
+  info: async (token) => {
+    if (!sb) return { campaign_id: "demo-a", campaign_name: "Shadows of Destus", role: "player", valid: true };
+    try {
+      const rows = await q(sb.rpc("invite_info", { p_token: token }));
+      return (rows && rows[0]) || null;
+    } catch (e) { if (notThere(e)) return null; throw e; }
+  },
+  // Redeem a token: add the signed-in user to the campaign. Returns
+  // { campaign_id, already }. Requires auth (enforced server-side).
+  redeem: async (token, displayName) => {
+    if (!sb) return { campaign_id: "demo-a", already: false };
+    try {
+      return await q(sb.rpc("redeem_invite", { p_token: token, p_display_name: displayName || null }));
+    } catch (e) { if (notThere(e)) return null; throw e; }
   },
 };
 

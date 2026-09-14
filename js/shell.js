@@ -280,7 +280,7 @@ export async function boot(pageFile, pageTitle) {
 
   if (!myCampaigns.length) {
     renderHeader(pageFile, [document.createTextNode(session.email), signOutBtn()]);
-    renderNoCampaigns(main, session.email);
+    await renderNoCampaigns(main, session.email);
     return null;
   }
 
@@ -311,8 +311,26 @@ export async function boot(pageFile, pageTitle) {
   return ctx;
 }
 
-/* ── signed in, but not in any campaign yet ── */
-function renderNoCampaigns(main, email) {
+/* ── signed in, but not in any campaign yet ──
+   Allow-listed accounts (can create campaigns) get the "start your first
+   table" form. Everyone else joins through an invite link, so they see a
+   note pointing them at their DM instead of a create form. */
+async function renderNoCampaigns(main, email) {
+  let canCreate = false;
+  try { canCreate = await campaigns.canCreate(); } catch { canCreate = false; }
+
+  if (!canCreate) {
+    main.innerHTML = `
+      <div class="card gate">
+        <h2>Welcome, ${esc(email)}</h2>
+        <p class="muted small">You're signed in but not part of any campaign yet. Ask your DM
+        for an invite link — open it and you'll be dropped straight into their table.</p>
+        <div class="actions"><button class="btn-ghost" id="nc-out">Sign out</button></div>
+      </div>`;
+    document.getElementById("nc-out").onclick = async () => { await auth.signOut(); location.reload(); };
+    return;
+  }
+
   main.innerHTML = `
     <div class="card gate">
       <h2>Welcome, ${esc(email)}</h2>
