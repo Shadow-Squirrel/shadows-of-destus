@@ -786,18 +786,25 @@ export function renderBuilder(root, ctx, opts) {
   /* ════════════ STEP: BACKGROUND ════════════ */
   function stepBackground(body) {
     const cur = draft.background;
-    const aco = BACKGROUNDS.acolyte;
+    const list = Object.values(BACKGROUNDS).sort((a, b) => a.name.localeCompare(b.name));
+    const bgSub = (bg) => {
+      const bits = [bg.skills.map(skillName).join(", ")];
+      if (bg.tools?.length) bits.push(bg.tools.join(", "));
+      if (bg.languages?.choose) bits.push(`${bg.languages.choose} language${bg.languages.choose > 1 ? "s" : ""}`);
+      return bits.join(" · ");
+    };
     body.innerHTML = `
       <div class="card">
         <h3 class="section">Choose a background</h3>
         <div class="opt-grid">
-          <button class="opt-card ${cur?.kind === "srd" && cur.index === "acolyte" ? "selected" : ""}" data-bg="acolyte">
-            <div class="opt-title">${esc(aco.name)}</div>
-            <div class="opt-sub">${aco.skills.map(skillName).map(esc).join(", ")} · 2 languages</div>
-          </button>
+          ${list.map((bg) => `
+          <button class="opt-card ${cur?.kind === "srd" && cur.index === bg.index ? "selected" : ""}" data-bg="${esc(bg.index)}">
+            <div class="opt-title">${esc(bg.name)}</div>
+            <div class="opt-sub">${esc(bgSub(bg))}</div>
+          </button>`).join("")}
           <button class="opt-card ${cur?.kind === "custom" ? "selected" : ""}" data-bg="__custom">
             <div class="opt-title">Custom background</div>
-            <div class="opt-sub"><span class="pill mystic">homebrew</span> Urchin, Soldier, Noble…</div>
+            <div class="opt-sub"><span class="pill mystic">homebrew</span> your own</div>
           </button>
         </div>
         <div id="bg-detail"></div>
@@ -820,17 +827,19 @@ export function renderBuilder(root, ctx, opts) {
     const raceLangs = new Set((raceInfo(draft)?.languages || []).map(String));
     if (draft.background?.kind === "srd") {
       const bg = draft.background;
-      const choose = aco.languages?.choose || 0;
+      const info = BACKGROUNDS[bg.index];
+      const choose = info.languages?.choose || 0;
       const picked = bg.languageChoices || [];
       const pool = LANGUAGES.map((l) => l.index).filter((i) => !raceLangs.has(i));
       detail.innerHTML = `
         <p class="muted small" style="margin-top:14px">Skill proficiencies:
-          <strong>${aco.skills.map(skillName).map(esc).join(", ")}</strong></p>
-        <label class="field">Bonus languages — choose ${choose} (any)</label>
+          <strong>${info.skills.map(skillName).map(esc).join(", ")}</strong>${
+          info.tools?.length ? `<br>Tools: <strong>${info.tools.map(esc).join(", ")}</strong>` : ""}</p>
+        ${choose ? `<label class="field">Bonus languages — choose ${choose} (any)</label>
         <div class="choice-row">${pool.map((i) =>
           chipBtn(esc(langName(i)), picked.includes(i), `data-bglang="${esc(i)}"`, { disabled: !picked.includes(i) && picked.length >= choose })
-        ).join("")}</div>
-        <details class="fold"><summary>Feature: ${esc(aco.feature.name)}</summary>${md(aco.feature.desc)}</details>`;
+        ).join("")}</div>` : ""}
+        <details class="fold"><summary>Feature: ${esc(info.feature.name)}</summary>${md(info.feature.desc)}</details>`;
       $$("[data-bglang]", detail).forEach((b) => (b.onclick = () => {
         const v = b.dataset.bglang, arr = (bg.languageChoices ||= []);
         const i = arr.indexOf(v);

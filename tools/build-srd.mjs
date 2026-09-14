@@ -475,7 +475,18 @@ for (const b of bgRaw) {
     },
   };
 }
-emit("backgrounds.js", { BACKGROUNDS });
+// Merge in the hand-authored standard backgrounds (mechanics + original
+// feature text) so the generated file exposes all of them, not just Acolyte.
+writeFileSync(
+  join(OUT, "backgrounds.js"),
+  HEADER +
+    `// Standard non-SRD backgrounds (mechanics + original feature text) are\n` +
+    `// merged in from backgrounds-extra.js.\n` +
+    `import { EXTRA_BACKGROUNDS } from "./backgrounds-extra.js";\n` +
+    `const SRD_BACKGROUNDS = ${JSON.stringify(BACKGROUNDS, null, 1)};\n` +
+    `export const BACKGROUNDS = { ...SRD_BACKGROUNDS, ...EXTRA_BACKGROUNDS };\n`
+);
+console.log("  backgrounds.js (+ extras merge)");
 
 /* ═══ feats.js (SRD has exactly one: Grappler) ═══ */
 const featsRaw = load("Feats");

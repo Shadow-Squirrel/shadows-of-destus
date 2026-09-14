@@ -526,11 +526,21 @@ export function createBoard(wrap, hooks = {}) {
       else redrawAll();
     };
     if (!url) { apply(null); return; }
-    const img = new Image();
-    img.crossOrigin = "anonymous";
-    img.onload = () => apply(img);
-    img.onerror = () => apply(null);            // broken image → parchment
-    img.src = url;
+    // We only DRAW the map (never read its pixels back), so we don't need
+    // crossOrigin — and requesting it would make the image fail to load
+    // whenever the host (e.g. a Supabase signed URL) omits CORS headers,
+    // silently blanking the board. Load plainly; the canvas may become
+    // "tainted", which is harmless here.
+    const load = (useCors) => {
+      const img = new Image();
+      if (useCors) img.crossOrigin = "anonymous";
+      img.onload = () => apply(img);
+      // a CORS attempt that fails gets one plain retry; a plain load that
+      // fails is a genuinely broken image → parchment fallback
+      img.onerror = () => (useCors ? load(false) : apply(null));
+      img.src = url;
+    };
+    load(false);
   }
 
   function setGrid(g) {
