@@ -146,6 +146,20 @@ void main(){
   acc+=uColA*fl*smoothstep(1.0,0.0,dc)*(uStyle==2?2.1:1.6);
   acc+=uColB*fl*0.22*smoothstep(1.0,0.0,dc);
 
+  // rising embers — fire only; a few round motes lifting off the blast, kept
+  // tight to the fire (not a screen-wide snowfall) and twinkling as they rise
+  if(uStyle==0){
+    float g=smoothstep(1.0,0.15,dc);            // concentrate near the blast
+    vec2 ep=uv*9.0; ep.y+=t*3.5; float emb=0.0;
+    for(int k=0;k<2;k++){
+      vec2 gg=ep*(1.0+float(k)*0.5); vec2 ce=floor(gg); float rnd=hash13(vec3(ce,float(k)*7.0));
+      if(rnd>0.90){ vec2 jc=(vec2(hash13(vec3(ce,1.3)),hash13(vec3(ce,7.7)))-0.5)*0.7;
+        float dd=length(fract(gg)-0.5-jc);
+        emb+=smoothstep(0.22,0.0,dd)*(0.5+0.5*sin(t*30.0+rnd*60.0)); }
+    }
+    acc+=uColA*emb*g*fade*1.7;
+  }
+
   acc=acc/(1.0+acc*0.34)*1.35;
   acc=pow(max(acc,0.0),vec3(0.88));
   // PREMULTIPLIED output: rgb = the light to add, alpha = its coverage. Under

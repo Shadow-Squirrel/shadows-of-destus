@@ -1367,7 +1367,8 @@ export function createFx(canvas, view) {
     /* ── fire ── */
     "fireball": () => [
       A({ type: "projectile", dur: 480, size: 10, arc: 0.35 }),
-      A({ type: "vfire", delay: 470, dur: 1300, radiusFt: 20 }),   // volumetric blaze
+      A({ type: "vfire", delay: 468, dur: 1500, radiusFt: 20, spread: 1.85, spanSec: 1.75 }), // main blaze
+      A({ type: "vfire", delay: 640, dur: 900, radiusFt: 12, spread: 1.6, spanSec: 1.3 }),     // secondary flare-up
       A({ type: "burst", delay: 480, dur: 700, radiusFt: 20, particles: 90, embers: true }),
       A({ type: "burst", delay: 560, dur: 500, radiusFt: 10, scale: 0.7 }),
       A({ type: "ring", delay: 480, dur: 600, radiusFt: 20, expand: true }),
@@ -1440,7 +1441,8 @@ export function createFx(canvas, view) {
     "meteor-swarm": (sp) => [0, 220, 440, 660].map((d) =>
       A({ type: "projectile", delay: d, dur: 500, size: 14, arc: 1.4 })
     ).concat([
-      A({ type: "vfire", delay: 890, dur: 1600, radiusFt: sz(sp, 40) }),
+      A({ type: "vfire", delay: 880, dur: 1900, radiusFt: sz(sp, 40), spread: 1.7, spanSec: 2.0 }),
+      A({ type: "vfire", delay: 1080, dur: 1300, radiusFt: sz(sp, 40) * 0.7, spread: 1.6, spanSec: 1.6 }),
       A({ type: "burst", delay: 900, dur: 900, radiusFt: sz(sp, 40), particles: 120, embers: true }),
       A({ type: "ring", delay: 900, dur: 800, radiusFt: sz(sp, 40), expand: true }),
       A({ type: "ring", delay: 1700, dur: 3600, radiusFt: sz(sp, 40), linger: true, dashed: true }),
@@ -1453,6 +1455,7 @@ export function createFx(canvas, view) {
     ],
     "cone-of-cold": (sp) => [
       A({ type: "cone", dur: 950, lengthFt: sz(sp, 60) }),
+      A({ type: "vfire", style: "frost", delay: 220, dur: 1500, radiusFt: sz(sp, 60) * 0.3, spanSec: 1.6 }),
       A({ type: "frost", delay: 500, dur: 2400, radiusFt: sz(sp, 60) * 0.4 }),
     ],
     "ice-storm": (sp) => [
@@ -1479,6 +1482,7 @@ export function createFx(canvas, view) {
     "lightning-bolt": () => [
       A({ type: "bolt", dur: 850, steady: true, jagFt: 5, forks: 4 }), // a persistent forked bolt, not a tube
       A({ type: "bolt", delay: 40, dur: 760 }),                        // a live flicker layered on
+      A({ type: "vfire", style: "spark", delay: 120, dur: 720, radiusFt: 7, spanSec: 1.0 }), // electric impact flash
       A({ type: "burst", delay: 150, dur: 500, radiusFt: 6, particles: 34 }),
     ],
     "chain-lightning": () => [
