@@ -95,6 +95,33 @@ async function main() {
   const centerOf = (t) => ({ x: t.x + t.size / 2, y: t.y + t.size / 2 });
   const visibleTokens = () => tokens.filter((t) => isDM || !t.hidden);
   const firstName = (s) => String(s || "").trim().split(/\s+/)[0] || "Hero";
+  // the token whose footprint covers a picked cell (world coords), if any
+  const tokenAt = (pt) => visibleTokens().find((t) =>
+    pt.x >= t.x && pt.x < t.x + t.size && pt.y >= t.y && pt.y < t.y + t.size) || null;
+
+  // Spells whose effect lingers on whatever token they land on: casting one
+  // tags the target so the board shows it for the spell's duration. board.js
+  // renders conditions (translucent, stone-gray, toppled, …) and the optional
+  // `aura` glow hint entirely from the token's synced fields, so wiring is just
+  // "add the condition / set the aura" — it clears when removed from the token
+  // menu. Keyed by SRD spell index.
+  const SPELL_TOKEN_EFFECT = {
+    invisibility:           { cond: "invisible" },
+    "greater-invisibility": { cond: "invisible" },
+    "flesh-to-stone":       { cond: "petrified" },
+    "hold-person":          { cond: "paralyzed" },
+    "hold-monster":         { cond: "paralyzed" },
+    "power-word-stun":      { cond: "stunned" },
+    sleep:                  { cond: "unconscious" },
+    web:                    { cond: "restrained" },
+    entangle:               { cond: "restrained" },
+    "black-tentacles":      { cond: "restrained" },
+    bless:                  { aura: "bless" },
+    "faerie-fire":          { aura: "holy" },
+    stoneskin:              { aura: "stone" },
+    "fire-shield":          { aura: "burning" },
+    blur:                   { aura: "blur" },
+  };
 
   /* ── skeleton ── */
   root.innerHTML = `
@@ -257,6 +284,25 @@ async function main() {
           await characters.save({ id: crow.id, name: crow.name, sheet }, crow.owner_email);
           crow.sheet = sheet;
         } else toast("slot not spent (not your sheet)");
+      }
+      // lasting spells leave their mark on the token they land on, so the
+      // board shows the effect for the duration (cleared from the token menu)
+      const eff = !custom && SPELL_TOKEN_EFFECT[sp.index];
+      if (eff) {
+        const tgt = tokenAt(pt);
+        if (tgt && (isDM || isMine(tgt))) {
+          const patch = {};
+          if (eff.cond) {
+            const cur = Array.isArray(tgt.conditions) ? tgt.conditions.map(String) : [];
+            if (!cur.includes(eff.cond)) patch.conditions = [...cur, eff.cond];
+          }
+          if (eff.aura && tgt.aura !== eff.aura) patch.aura = eff.aura;
+          if (Object.keys(patch).length) {
+            await updateToken(tgt, patch);
+            const noun = eff.cond ? (CONDITIONS[eff.cond]?.name || eff.cond) : sp.name;
+            toast(`${tgt.label}: ${noun} — clear from its token menu when it ends`);
+          }
+        }
       }
       renderSide();
     }

@@ -68,6 +68,33 @@ function hpColor(frac) {
   return `rgb(${c[0]},${c[1]},${c[2]})`;
 }
 
+/* Drain a #hex toward stony gray — for the petrified look. */
+function grayify(col, mix = 0.85) {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(String(col).trim());
+  if (!m) return "#6f6a60";
+  let h = m[1];
+  if (h.length === 3) h = h.replace(/./g, (c) => c + c);
+  const n = parseInt(h, 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  const lum = 0.3 * r + 0.59 * g + 0.11 * b;
+  const stone = lum * 0.55 + 78;                 // lift toward a mid stone tone
+  const bl = (v) => Math.round(v + (stone - v) * mix);
+  return `rgb(${bl(r)},${bl(g) + 3},${bl(b) + 6})`; // faint cool cast
+}
+
+/* Aura presets a token can opt into via a `t.aura` hint (see setTokens note). */
+const AURA_PRESETS = {
+  bless:   { tint: "#ffdf8a", style: "glow" },
+  holy:    { tint: "#fffbe0", style: "glow" },
+  burning: { tint: "#ff7b2d", style: "ember" },
+  toxic:   { tint: "#8fbf4f", style: "ember" },
+  blur:    { tint: "#9b8ec9", style: "blur" },
+  stone:   { tint: "#c9bfa8", style: "glow" },
+};
+/* A couple of conditions light up a subtle aura on their own, so casting a
+   spell that adds the condition is all it takes (nothing else to wire). */
+const COND_AURA = { poisoned: "toxic" };
+
 export function createBoard(wrap, hooks = {}) {
   /* ── the three stacked canvases ── */
   const mkCanvas = (cls) => {
@@ -98,6 +125,7 @@ export function createBoard(wrap, hooks = {}) {
   let dpr = 1;
   let cssW = 0, cssH = 0;
   let needFit = true;                    // auto-fit once we have real size
+  let shakeOff = { x: 0, y: 0 };         // transient earthquake offset (css px)
 
   /* ── coordinate plumbing ── */
   const cssToWorld = (x, y) => ({ x: (x - pan.x) / scale, y: (y - pan.y) / scale });
@@ -113,11 +141,15 @@ export function createBoard(wrap, hooks = {}) {
     return { w: EMPTY_COLS * CELL, h: EMPTY_ROWS * CELL };
   }
 
-  /* LIVE adapter for effects.js — canvas (device) px, every call. */
+  /* LIVE adapter for effects.js — canvas (device) px, every call. The
+     shake offset rides along here too, so spell fx judder in lock-step
+     with the map and tokens during an earthquake. */
   const view = {
-    toPx: (g) => ({ x: (g.x * CELL * scale + pan.x) * dpr, y: (g.y * CELL * scale + pan.y) * dpr }),
+    toPx: (g) => ({ x: (g.x * CELL * scale + pan.x + shakeOff.x) * dpr, y: (g.y * CELL * scale + pan.y + shakeOff.y) * dpr }),
     cellPx: () => CELL * scale * dpr,
     feetToPx: (ft) => (ft / (grid.feet > 0 ? grid.feet : 5)) * CELL * scale * dpr,
+    // effects.js calls this for earthquake — the whole board judders, then settles
+    shake: (ms, magFt) => shakeBoard(ms, magFt),
   };
 
   /* ── sizing ── */
@@ -161,7 +193,7 @@ export function createBoard(wrap, hooks = {}) {
   function drawBase() {
     bctx.setTransform(1, 0, 0, 1, 0, 0);
     bctx.clearRect(0, 0, baseC.width, baseC.height);
-    bctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * pan.x, dpr * pan.y);
+    bctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * (pan.x + shakeOff.x), dpr * (pan.y + shakeOff.y));
     const ws = worldSize();
 
     if (mapImg && mapImg.naturalWidth > 0) {
@@ -192,19 +224,97 @@ export function createBoard(wrap, hooks = {}) {
     }
   }
 
+  /* ── condition-state helper drawers (all in world px, upright) ── */
+  // pick an aura from the token's optional `t.aura` hint, else from a
+  // condition that maps to one (see the setTokens note for the hook).
+  function resolveAura(t, conds) {
+    let a = t.aura;
+    if (typeof a === "string") a = AURA_PRESETS[a];
+    if (!a) for (const c of conds) if (COND_AURA[c]) { a = AURA_PRESETS[COND_AURA[c]]; break; }
+    return a && a.tint ? a : null;
+  }
+  function drawAura(cx, cy, r, aura, alpha, now) {
+    tctx.save();
+    const R = r * 1.28;
+    if (aura.style === "blur") {                 // soft haze — two offset discs
+      tctx.globalAlpha = alpha * 0.26; tctx.fillStyle = aura.tint;
+      for (const d of [-1, 1]) { tctx.beginPath(); tctx.arc(cx + d * r * 0.16, cy, r * 1.06, 0, TAU); tctx.fill(); }
+    } else if (aura.style === "ember") {         // ring of flickering embers
+      const n = 10;
+      for (let i = 0; i < n; i++) {
+        const a = i / n * TAU + now / 900, f = 0.5 + 0.5 * Math.sin(now / 200 + i);
+        tctx.globalAlpha = alpha * (0.3 + 0.5 * f); tctx.fillStyle = aura.tint;
+        tctx.beginPath(); tctx.arc(cx + Math.cos(a) * R, cy + Math.sin(a) * R, Math.max(1.5 / scale, r * 0.09 * (0.6 + f * 0.6)), 0, TAU); tctx.fill();
+      }
+    } else {                                     // soft glow ring
+      tctx.globalAlpha = alpha * 0.7; tctx.strokeStyle = aura.tint;
+      tctx.shadowColor = aura.tint; tctx.shadowBlur = 16;
+      tctx.lineWidth = Math.max(2 / scale, r * 0.12);
+      tctx.beginPath(); tctx.arc(cx, cy, R, 0, TAU); tctx.stroke();
+    }
+    tctx.restore();
+  }
+  function drawBinding(cx, cy, r, alpha) {       // web / chain hint for restrained·grappled
+    tctx.save();
+    tctx.globalAlpha = alpha * 0.7; tctx.strokeStyle = "rgba(225,230,238,.85)";
+    tctx.lineWidth = Math.max(1 / scale, r * 0.05);
+    tctx.beginPath(); tctx.arc(cx, cy, r * 0.98, 0, TAU); tctx.clip();  // keep the net on the disc
+    tctx.beginPath();
+    for (let i = 0; i < 6; i++) { const a = i / 6 * TAU; tctx.moveTo(cx, cy); tctx.lineTo(cx + Math.cos(a) * r, cy + Math.sin(a) * r); }
+    tctx.stroke();
+    tctx.beginPath(); tctx.arc(cx, cy, r * 0.5, 0, TAU); tctx.stroke();
+    tctx.beginPath(); tctx.arc(cx, cy, r * 0.82, 0, TAU); tctx.stroke();
+    tctx.restore();
+  }
+  function starAt(x, y, rad, points) {
+    tctx.beginPath();
+    for (let i = 0; i < points * 2; i++) {
+      const a = i / (points * 2) * TAU - Math.PI / 2, rr = i % 2 ? rad * 0.42 : rad;
+      const px = x + Math.cos(a) * rr, py = y + Math.sin(a) * rr;
+      i ? tctx.lineTo(px, py) : tctx.moveTo(px, py);
+    }
+    tctx.closePath(); tctx.fill();
+  }
+  function drawDownedStars(cx, cy, r, now) {     // stunned·paralyzed·unconscious
+    tctx.save();
+    tctx.fillStyle = GOLD; tctx.shadowColor = "rgba(212,165,49,.7)"; tctx.shadowBlur = 6;
+    const R = r * 0.7, top = cy - r * 1.02;
+    for (let i = 0; i < 3; i++) {
+      const a = i / 3 * TAU + now / 500;
+      tctx.globalAlpha = 0.85;
+      starAt(cx + Math.cos(a) * R, top + Math.sin(a) * R * 0.35, Math.max(2, r * 0.15), 4);
+    }
+    tctx.restore();
+  }
+
   /* ── token layer ── */
   function drawToken(t, gx, gy, ghost) {
     const size = sizeOf(t);
     const cx = (gx + size / 2) * CELL;
     const cy = (gy + size / 2) * CELL;
     const r = size * CELL * 0.44;                // diameter = size · cell · 0.88
-    const color = t.color || KIND_COLORS[t.kind] || KIND_COLORS.marker;
-    const alpha = (t.hidden ? 0.45 : 1) * (ghost ? 0.85 : 1);
+    const baseColor = t.color || KIND_COLORS[t.kind] || KIND_COLORS.marker;
+
+    // condition-driven state, all from the synced `conditions` array
+    const conds = Array.isArray(t.conditions) ? t.conditions.map((c) => String(c).toLowerCase()) : [];
+    const has = (c) => conds.includes(c);
+    const invisible = has("invisible");
+    const petrified = has("petrified");
+    const prone = has("prone");
+    const downed = has("stunned") || has("paralyzed") || has("unconscious");
+    const bound = has("restrained") || has("grappled");
+    const aura = resolveAura(t, conds);
+
+    const color = petrified ? grayify(baseColor) : baseColor;   // stone-gray
+    let alpha = (t.hidden ? 0.45 : 1) * (ghost ? 0.85 : 1);
+    if (invisible) alpha *= 0.35;                                // translucent
+    else if (downed && !petrified) alpha *= 0.72;               // dimmed
+    const now = performance.now();
     tctx.save();
 
     // whose-turn ring — breathes while the pulse loop runs
     if (t._turn) {
-      const p = 0.5 + 0.5 * Math.sin(performance.now() / 260);
+      const p = 0.5 + 0.5 * Math.sin(now / 260);
       tctx.globalAlpha = alpha * (0.5 + 0.45 * p);
       tctx.strokeStyle = GOLD;
       tctx.shadowColor = "rgba(212,165,49,.85)";
@@ -229,23 +339,49 @@ export function createBoard(wrap, hooks = {}) {
       tctx.shadowBlur = 0;
     }
 
-    // the disc + darker rim (dashed when hidden — DM's staged tokens)
+    // optional aura glow (behind the body, upright)
+    if (aura) drawAura(cx, cy, r, aura, alpha, now);
+
+    // ── the body: disc + rim + hp + initials — visibly toppled when prone ──
+    tctx.save();
+    if (prone) { tctx.translate(cx, cy); tctx.rotate(-0.62); tctx.scale(1, 0.5); tctx.translate(-cx, -cy); }
+
     tctx.globalAlpha = alpha;
     tctx.beginPath();
     tctx.arc(cx, cy, r, 0, TAU);
     tctx.fillStyle = color;
     tctx.fill();
     tctx.lineWidth = Math.max(1.2 / scale, r * 0.075);
-    tctx.strokeStyle = darken(color);
+    tctx.strokeStyle = petrified ? "#4c473d" : darken(color);
     if (t.hidden) tctx.setLineDash([7, 5]);
     tctx.stroke();
     tctx.setLineDash([]);
+
+    // invisible: a faint shimmering dashed outline
+    if (invisible) {
+      tctx.globalAlpha = 0.5 + 0.3 * Math.sin(now / 300);
+      tctx.strokeStyle = "rgba(200,225,255,.85)";
+      tctx.lineWidth = Math.max(1 / scale, r * 0.06);
+      tctx.setLineDash([Math.max(3, r * 0.16), Math.max(3, r * 0.16)]);
+      tctx.lineDashOffset = (now / 40) % 1000;
+      tctx.beginPath(); tctx.arc(cx, cy, r * 1.05, 0, TAU); tctx.stroke();
+      tctx.setLineDash([]); tctx.lineDashOffset = 0;
+    }
+    // petrified: a couple of stony cracks
+    if (petrified) {
+      tctx.globalAlpha = alpha * 0.5; tctx.strokeStyle = "#413c33"; tctx.lineWidth = Math.max(1 / scale, r * 0.05);
+      tctx.beginPath();
+      tctx.moveTo(cx - r * 0.4, cy - r * 0.5); tctx.lineTo(cx - r * 0.05, cy + r * 0.1); tctx.lineTo(cx - r * 0.3, cy + r * 0.6);
+      tctx.moveTo(cx + r * 0.35, cy - r * 0.55); tctx.lineTo(cx + r * 0.1, cy);
+      tctx.stroke();
+    }
 
     // thin HP arc riding the rim: 12 o'clock, clockwise, green→gold→red
     if (Number.isFinite(+t.hp_max) && +t.hp_max > 0) {
       const cur = t.hp_current == null ? +t.hp_max : +t.hp_current;
       const frac = clamp(cur / +t.hp_max, 0, 1);
       if (frac > 0) {
+        tctx.globalAlpha = alpha;
         tctx.beginPath();
         tctx.arc(cx, cy, r, -TAU / 4, -TAU / 4 + frac * TAU);
         tctx.lineWidth = Math.max(1.5 / scale, r * 0.075);
@@ -261,17 +397,22 @@ export function createBoard(wrap, hooks = {}) {
     // initials
     const ini = initialsOf(t.label);
     const fs = r * (ini.length === 1 ? 0.9 : ini.length === 2 ? 0.6 : 0.46);
+    tctx.globalAlpha = alpha;
     tctx.font = `700 ${fs}px ${DISPLAY_FONT}`;
     tctx.textAlign = "center";
     tctx.textBaseline = "middle";
     tctx.lineWidth = Math.max(1 / scale, fs * 0.1);
     tctx.strokeStyle = "rgba(22,16,7,.5)";
     tctx.strokeText(ini, cx, cy + fs * 0.06);
-    tctx.fillStyle = "#f6efdc";
+    tctx.fillStyle = petrified ? "#d8d2c4" : "#f6efdc";
     tctx.fillText(ini, cx, cy + fs * 0.06);
+    tctx.restore();                              // end body (drops the prone tilt)
+
+    // ── overlays that stay upright ──
+    if (bound) drawBinding(cx, cy, r, alpha);    // web / chain hint
+    if (downed) drawDownedStars(cx, cy, r, now); // stunned / paralyzed / unconscious
 
     // condition badges along the bottom: up to 3 letters, then "+n"
-    const conds = Array.isArray(t.conditions) ? t.conditions : [];
     if (conds.length) {
       const shown = conds.slice(0, 3).map((c) => String(c).charAt(0).toUpperCase() || "?");
       if (conds.length > 3) shown.push("+" + (conds.length - 3));
@@ -281,6 +422,7 @@ export function createBoard(wrap, hooks = {}) {
       let bx = cx - ((shown.length - 1) * step) / 2;
       for (const badge of shown) {
         const more = badge.length > 1;
+        tctx.globalAlpha = 1;
         tctx.beginPath();
         tctx.arc(bx, by, br, 0, TAU);
         tctx.fillStyle = "#7e2f24";
@@ -300,7 +442,7 @@ export function createBoard(wrap, hooks = {}) {
   function drawTokens() {
     tctx.setTransform(1, 0, 0, 1, 0, 0);
     tctx.clearRect(0, 0, tokC.width, tokC.height);
-    tctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * pan.x, dpr * pan.y);
+    tctx.setTransform(dpr * scale, 0, 0, dpr * scale, dpr * (pan.x + shakeOff.x), dpr * (pan.y + shakeOff.y));
 
     const dragging = gesture && gesture.kind === "token" ? gesture : null;
     if (dragging) {
@@ -333,6 +475,28 @@ export function createBoard(wrap, hooks = {}) {
   function syncPulse() {
     if (!pulseRaf && !destroyed && tokens.some((t) => t._turn))
       pulseRaf = requestAnimationFrame(pulseTick);
+  }
+
+  /* transient ground-shake (earthquake): a short, decaying random offset
+     applied to every layer that settles back to zero — never sticks. */
+  let shakeRaf = 0, shakeStart = 0, shakeDur = 0, shakeMag = 0;
+  function shakeTick(now) {
+    shakeRaf = 0;
+    if (destroyed) return;
+    const el = now - shakeStart;
+    if (el >= shakeDur) { shakeOff = { x: 0, y: 0 }; redrawAll(); return; }
+    const amp = shakeMag * (1 - el / shakeDur);            // decay to nothing
+    shakeOff = { x: (Math.random() * 2 - 1) * amp, y: (Math.random() * 2 - 1) * amp };
+    redrawAll();
+    shakeRaf = requestAnimationFrame(shakeTick);
+  }
+  function shakeBoard(ms = 800, magFt = 1.5) {
+    if (destroyed) return;
+    const px = (magFt / (grid.feet > 0 ? grid.feet : 5)) * CELL * scale; // ft → css px, zoom-aware
+    shakeStart = performance.now();
+    shakeDur = Math.max(120, ms | 0);
+    shakeMag = clamp(px * 0.6, 2, 48);                     // damp + cap so it reads as a judder, not chaos
+    if (!shakeRaf) shakeRaf = requestAnimationFrame(shakeTick);
   }
 
   /* ── input: pan / zoom / pinch / drag / tap ── */
@@ -549,6 +713,26 @@ export function createBoard(wrap, hooks = {}) {
     redrawAll();
   }
 
+  // ── Persistent per-token spell states ──
+  // Token visuals are driven entirely by the already-synced `conditions`
+  // array (and one optional `aura` hint), so they persist for the spell's
+  // duration and clear the moment the condition is removed — nothing else
+  // to wire on the render side. To light one up, the Cast tab just adds the
+  // matching condition to the target token (the same array the token menu
+  // already toggles). Suggested caster mapping:
+  //     invisibility / greater-invisibility → add "invisible"  (translucent + shimmer)
+  //     flesh-to-stone                       → add "petrified"  (stone-gray + cracks)
+  //     (any knock-down / hit while at 0 hp) → add "prone"      (toppled disc)
+  //     hold-person / hold-monster           → add "paralyzed"  (dim + circling stars)
+  //     power-word-stun                      → add "stunned"
+  //     sleep / unconsciousness              → add "unconscious"
+  //     web / entangle / black-tentacles     → add "restrained" (web overlay)
+  //     grappled by a creature               → add "grappled"
+  // Optional generic AURA: set `t.aura` to a preset name ("bless" | "holy" |
+  // "burning" | "toxic" | "blur" | "stone") or a `{ tint:"#hex", style:"glow"|
+  // "ember"|"blur" }` object — e.g. bless → "bless", stoneskin → "stone",
+  // fire-shield → "burning", blur → "blur". A few conditions also imply an
+  // aura on their own (see COND_AURA: poisoned → toxic-green embers).
   function setTokens(list) {
     tokens = Array.isArray(list) ? list.map((t) => ({ ...t })) : [];
     if (gesture && gesture.kind === "token") {
@@ -575,6 +759,7 @@ export function createBoard(wrap, hooks = {}) {
   function destroy() {
     destroyed = true;
     if (pulseRaf) cancelAnimationFrame(pulseRaf);
+    if (shakeRaf) cancelAnimationFrame(shakeRaf);
     ro.disconnect();
     window.removeEventListener("resize", resize);
     wrap.removeEventListener("pointerdown", onDown);
@@ -590,5 +775,5 @@ export function createBoard(wrap, hooks = {}) {
     for (const c of [baseC, tokC, fxC]) c.remove();
   }
 
-  return { setMap, setGrid, setTokens, setSelected, setTargeting, fit, view, fxCanvas: fxC, destroy };
+  return { setMap, setGrid, setTokens, setSelected, setTargeting, fit, view, fxCanvas: fxC, shake: shakeBoard, destroy };
 }
