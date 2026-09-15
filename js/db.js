@@ -1028,6 +1028,35 @@ export const ai = {
     if (data?.error) throw new Error(data.error);
     return data?.monster || null;
   },
+  // AI DM-prep accelerator: {campaignId, description, partyLevel, partySize,
+  // difficulty, srd:[{i,n,cr}]} → a plan object
+  //   { title, summary, map_prompt, monsters:[{name, srd_index, count, cr,
+  //     homebrew_prompt}] }
+  // Spends ONE slot of the AI *text* budget (the plan itself). The map and any
+  // generated homebrew monsters are billed separately as the caller runs them.
+  // Throws .code==='not-configured' when unset, or the DB's clean cap message.
+  planEncounter: async ({ campaignId, description, partyLevel, partySize, difficulty, srd }) => {
+    if (!sb) throw new Error("AI generation needs the live database — it isn't available in demo mode.");
+    const cid = campaignId || campaignId === 0 ? campaignId : getCampaign();
+    const { data, error } = await sb.functions.invoke("plan-encounter", {
+      body: { campaignId: cid, description, partyLevel, partySize, difficulty, srd },
+    });
+    if (error) {
+      let msg = error.message || "Encounter planning failed";
+      try {
+        const b = await error.context.json();
+        if (b?.error === "not-configured") throw notConfigured();
+        if (b?.error) msg = b.error;
+      } catch (inner) {
+        if (inner?.code === "not-configured") throw inner;
+        if (/Failed to send|Function not found|404|not found/i.test(msg)) throw notConfigured();
+      }
+      throw new Error(msg);
+    }
+    if (data?.error === "not-configured") throw notConfigured();
+    if (data?.error) throw new Error(data.error);
+    return data?.plan || null;
+  },
   // The signed-in DM's AI *text* usage this month, or null if not set up.
   textUsage: async () => {
     if (!sb) return null;

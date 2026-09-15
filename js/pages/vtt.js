@@ -5,7 +5,7 @@
 // whose effects burst on everyone's screen at once (effects.js).
 // Demo mode plays the whole thing solo, in memory.
 import { boot, esc, guard, toast } from "../shell.js";
-import { vtt, characters, dice, maps, homebrewMonsters } from "../db.js";
+import { vtt, characters, dice, maps, homebrewMonsters, ai, getCampaign } from "../db.js";
 import { createBoard } from "../vtt/board.js";
 import { createFx } from "../vtt/effects.js";
 import { createRollStage, dieSvg } from "../roll-fx.js";
@@ -455,6 +455,7 @@ async function main() {
     if (isDM) {
       bar.innerHTML = `
         <select id="enc-sel" ${encounters.length ? "" : "hidden"}></select>
+        <button class="btn" id="ai-prep" title="Describe a fight — the AI drafts a map, monsters and tokens">⚡ AI Prep</button>
         ${current ? `
           ${current.active
             ? `<span class="pill gold">LIVE</span>`
@@ -475,6 +476,8 @@ async function main() {
         current = encounters.find((e) => e.id === sel.value) || current;
         await loadEncounter();
       });
+      const aip = bar.querySelector("#ai-prep");
+      if (aip) aip.onclick = () => openAiPrep();
       const go = bar.querySelector("#go-live");
       if (go) go.onclick = () => guard(async () => {
         await vtt.encounters.setActive(current.id);
@@ -516,13 +519,18 @@ async function main() {
       <div class="card" style="text-align:center; padding:44px 20px">
         <h2 class="section" style="margin-bottom:6px">Set the first scene</h2>
         <p class="muted" style="margin:0 0 18px">Pick a battle map, size the grid, stage your monsters —
-        then flip it live when the party walks in.</p>
-        <button class="btn" id="first-enc">⚑ New encounter</button>
+        then flip it live when the party walks in. Or let the AI draft the whole fight from a sentence.</p>
+        <div class="row" style="justify-content:center; gap:10px; flex-wrap:wrap">
+          <button class="btn" id="ai-prep-empty">⚡ AI Prep an encounter</button>
+          <button class="btn-ghost" id="first-enc">⚑ New encounter by hand</button>
+        </div>
       </div>` : `
       <div class="empty" style="margin-top:10px">No battle raging right now. When the DM goes live,
       the battlefield appears here on its own — keep this page open.</div>`;
     const b = slot.querySelector("#first-enc");
     if (b) b.onclick = () => openEncounterModal(null);
+    const ap = slot.querySelector("#ai-prep-empty");
+    if (ap) ap.onclick = () => openAiPrep();
   }
 
   /* encounter create/edit modal (DM) */
@@ -572,6 +580,306 @@ async function main() {
         pushTokens(); renderToolbar();
       }
     });
+  }
+
+  /* ═══════════ AI DM-prep accelerator (DM) ═══════════
+     Describe a fight in a sentence; the planner (plan-encounter Edge
+     Function) drafts a balanced roster + a battle-map prompt, picking
+     monsters from the SRD catalogue we hand it. We PREVIEW it — so the DM
+     sees exactly what will be spent — then orchestrate: create the
+     encounter, draw the map (generate-image), pull each SRD monster or
+     generate a homebrew stat block, and drop the tokens, ready to run.
+     Every paid step is capped in the database before it fires; failures
+     are non-fatal (skipped and reported), so a half-built plan still
+     leaves a usable encounter. Nothing goes live until the DM flips it. */
+  const clampInt = (v, lo, hi, dflt) => Math.max(lo, Math.min(hi, Math.round(Number(v) || dflt)));
+
+  // A planned monster → an SRD/homebrew monster object, or null (=> generate).
+  function resolvePlanned(mo) {
+    const idx = String(mo.srd_index || "").trim().toLowerCase();
+    if (idx && MONSTERS[idx]) return MONSTERS[idx];
+    const name = String(mo.name || "").trim().toLowerCase();
+    if (name) {
+      const srd = Object.values(MONSTERS);
+      const hit = srd.find((m) => m.name.toLowerCase() === name)
+        || srd.find((m) => m.name.toLowerCase() === name.replace(/s$/, ""))
+        || Object.values(hbById).map(hbToMonster).find((m) => m.name.toLowerCase() === name);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  function openAiPrep() {
+    if (ctx.mode !== "real") { toast("AI prep needs the live database — not available in demo mode."); return; }
+    const state = {
+      description: "",
+      partyLevel: (() => {
+        const lv = charsAll.map((c) => drvOf(c)?.level).filter(Boolean);
+        return lv.length ? clampInt(lv.reduce((a, b) => a + b, 0) / lv.length, 1, 20, 3) : 3;
+      })(),
+      partySize: clampInt(tokens.filter((t) => t.kind === "pc").length || charsAll.length || 4, 1, 10, 4),
+      difficulty: "medium",
+      wantMap: true,
+    };
+
+    const modal = openModal("⚡ AI DM-prep", `<div id="ap-body"></div>`);
+    const body = modal.el.querySelector("#ap-body");
+    const msg = (s) => { const m = body.querySelector("#ap-msg"); if (m) m.textContent = s || ""; };
+
+    renderCompose();
+
+    /* ── step 1: describe the fight ── */
+    function renderCompose() {
+      body.innerHTML = `
+        <p class="muted small" style="margin:0 0 10px">Describe the fight in a sentence. The AI drafts a balanced
+          roster and a battle-map prompt — you review everything before it's built. Nothing is placed until you approve.</p>
+        <label class="field">The scene</label>
+        <textarea id="ap-desc" style="min-height:70px" placeholder="e.g. a goblin ambush in a pine gorge at dusk — a couple of archers up on the ridge and a snarling worg">${esc(state.description)}</textarea>
+        <div class="row" style="gap:14px; margin-top:10px; align-items:flex-end; flex-wrap:wrap">
+          <div><label class="field">Party level</label>
+            <input type="number" id="ap-lvl" min="1" max="20" value="${state.partyLevel}" style="width:84px" /></div>
+          <div><label class="field">Party size</label>
+            <input type="number" id="ap-size" min="1" max="10" value="${state.partySize}" style="width:84px" /></div>
+          <div><label class="field">Difficulty</label>
+            <select id="ap-diff" style="width:auto">
+              ${["easy", "medium", "hard", "deadly"].map((d) => `<option value="${d}" ${state.difficulty === d ? "selected" : ""}>${cap(d)}</option>`).join("")}
+            </select></div>
+        </div>
+        <label class="checkline" style="margin-top:12px"><input type="checkbox" id="ap-map" ${state.wantMap ? "checked" : ""} /> also draw a battle map (uses one AI image)</label>
+        <div class="actions" style="margin-top:14px">
+          <button class="btn" id="ap-plan">✨ Plan the encounter</button>
+          <button class="btn-ghost" id="ap-cancel">Cancel</button>
+          <span class="muted small" id="ap-msg"></span>
+        </div>
+        <p class="muted small" id="ap-quota" style="margin:8px 0 0"></p>`;
+      body.querySelector("#ap-cancel").onclick = modal.close;
+      body.querySelector("#ap-plan").onclick = onPlan;
+      (async () => {
+        let usage = null;
+        try { usage = await ai.textUsage(); } catch {}
+        const q = body.querySelector("#ap-quota");
+        if (!q) return;
+        if (!usage) q.innerHTML = `<span class="pill mystic">AI not set up</span> Deploy <code>plan-encounter</code> and set a provider key — see <code>docs/AI-DM-PREP.md</code>. You can still build encounters by hand.`;
+        else q.textContent = `Planner budget: ${usage.remaining ?? 0} of ${usage.cap ?? "?"} left this month. The map and any custom monsters draw their own budgets.`;
+      })();
+    }
+
+    function readCompose() {
+      state.description = body.querySelector("#ap-desc").value.trim();
+      state.partyLevel = clampInt(body.querySelector("#ap-lvl").value, 1, 20, 3);
+      state.partySize = clampInt(body.querySelector("#ap-size").value, 1, 10, 4);
+      state.difficulty = body.querySelector("#ap-diff").value;
+      state.wantMap = body.querySelector("#ap-map").checked;
+    }
+
+    function onPlan() {
+      readCompose();
+      if (!state.description) { toast("Describe the fight first"); return; }
+      const btn = body.querySelector("#ap-plan");
+      btn.disabled = true; msg("Consulting the loremasters… (a few seconds)");
+      guard(async () => {
+        try {
+          const srd = Object.values(MONSTERS).map((m) => ({ i: m.index, n: m.name, cr: m.crText }));
+          const plan = await ai.planEncounter({
+            campaignId: getCampaign(), description: state.description,
+            partyLevel: state.partyLevel, partySize: state.partySize,
+            difficulty: state.difficulty, srd,
+          });
+          if (!plan || !Array.isArray(plan.monsters)) throw new Error("No plan came back — try again");
+          renderPreview(plan);
+        } catch (e) {
+          btn.disabled = false; msg("");
+          if (e.code === "not-configured") { toast("AI prep isn't set up yet — see docs/AI-DM-PREP.md"); return; }
+          toast("⚠ " + (e.message || "Planning failed"));
+        }
+      });
+    }
+
+    /* ── step 2: review the plan (what will be built + spent) ── */
+    function renderPreview(plan) {
+      const rows = (plan.monsters || []).map((mo) => {
+        const resolved = resolvePlanned(mo);
+        return {
+          name: mo.name || (resolved ? resolved.name : "Creature"),
+          count: clampInt(mo.count, 1, 12, 1),
+          cr: String(mo.cr || (resolved ? resolved.crText : "?")),
+          homebrew_prompt: mo.homebrew_prompt || mo.name || "",
+          resolved, include: true,
+        };
+      });
+      body.innerHTML = `
+        <label class="field">Encounter name</label>
+        <input type="text" id="ap-title" maxlength="80" value="${esc(plan.title || "AI encounter")}" />
+        ${plan.summary ? `<p class="muted small" style="margin:8px 0 0; font-style:italic">${esc(plan.summary)}</p>` : ""}
+        ${state.wantMap ? `
+          <label class="field" style="margin-top:12px">Battle-map prompt <span class="muted small">(FLUX draws this)</span></label>
+          <textarea id="ap-mapprompt" style="min-height:52px">${esc(plan.map_prompt || "")}</textarea>` : ""}
+        <label class="field" style="margin-top:12px">Roster <span class="muted small">(untick any you don't want)</span></label>
+        <div id="ap-roster"></div>
+        <p class="muted small" id="ap-tally" style="margin:10px 0 0"></p>
+        <div class="actions" style="margin-top:12px">
+          <button class="btn" id="ap-build">⚔ Build encounter</button>
+          <button class="btn-ghost" id="ap-back">← Re-describe</button>
+          <span class="muted small" id="ap-msg"></span>
+        </div>`;
+      const roster = body.querySelector("#ap-roster");
+      roster.innerHTML = rows.length ? rows.map((r, i) => `
+        <div class="row" style="justify-content:space-between; align-items:center; gap:8px; padding:5px 0; border-bottom:1px solid var(--border-soft)">
+          <label class="checkline" style="margin:0; flex:1">
+            <input type="checkbox" data-inc="${i}" checked />
+            <span>${esc(r.name)} <span class="muted small">×${r.count} · CR ${esc(r.cr)}</span></span>
+          </label>
+          <span class="pill ${r.resolved ? (r.resolved.homebrew ? "mystic" : "moss") : "gold"}">${r.resolved ? (r.resolved.homebrew ? "homebrew" : "SRD") : "generate"}</span>
+        </div>`).join("") : `<p class="muted small" style="font-style:italic">The plan has no monsters — Re-describe with some foes.</p>`;
+      const tally = body.querySelector("#ap-tally");
+      const updateTally = () => {
+        const chosen = rows.filter((r) => r.include);
+        const gen = chosen.filter((r) => !r.resolved).length;
+        const placing = chosen.reduce((a, r) => a + r.count, 0);
+        tally.innerHTML =
+          `Will place <strong>${placing}</strong> token${placing === 1 ? "" : "s"}.` +
+          (state.wantMap ? " Draws <strong>1</strong> map image." : "") +
+          (gen ? ` Generates <strong>${gen}</strong> custom stat block${gen === 1 ? "" : "s"} (each spends a planner-budget slot).` : " No extra monster generations.");
+      };
+      updateTally();
+      roster.querySelectorAll("[data-inc]").forEach((el) =>
+        (el.onchange = () => { rows[+el.dataset.inc].include = el.checked; updateTally(); }));
+      body.querySelector("#ap-back").onclick = renderCompose;
+      body.querySelector("#ap-build").onclick = () => {
+        const title = body.querySelector("#ap-title").value.trim() || "AI encounter";
+        const mapPrompt = state.wantMap ? (body.querySelector("#ap-mapprompt").value.trim() || plan.map_prompt || "") : "";
+        const chosen = rows.filter((r) => r.include);
+        if (!chosen.length) { toast("Pick at least one monster, or Re-describe"); return; }
+        runBuild({ title, wantMap: state.wantMap, mapPrompt, rows: chosen });
+      };
+    }
+
+    /* ── step 3: orchestrate the build, with a live checklist ── */
+    function runBuild({ title, wantMap, mapPrompt, rows }) {
+      const steps = [{ key: "enc", label: "Create encounter", st: "run" }];
+      if (wantMap) steps.push({ key: "map", label: "Draw the battle map", st: "wait" });
+      rows.forEach((r, i) => steps.push({ key: "mon" + i, label: `${r.resolved ? "Place" : "Generate + place"} ${r.name} ×${r.count}`, st: "wait" }));
+      steps.push({ key: "open", label: "Open the encounter", st: "wait" });
+      const glyph = (s) => s === "done" ? "✓" : s === "run" ? "⏳" : s === "err" ? "⚠" : "·";
+      const render = () => {
+        body.innerHTML = `
+          <p class="muted small" style="margin:0 0 10px">Building your encounter — keep this open…</p>
+          <div>${steps.map((s) => `
+            <div class="row" style="gap:8px; padding:4px 0; align-items:flex-start">
+              <span style="width:1.2em; text-align:center; color:${s.st === "done" ? "var(--moss)" : s.st === "err" ? "var(--ember)" : "var(--muted)"}">${glyph(s.st)}</span>
+              <span style="${s.st === "wait" ? "color:var(--faint)" : ""}">${esc(s.label)}${s.note ? ` <span class="muted small">— ${esc(s.note)}</span>` : ""}</span>
+            </div>`).join("")}</div>
+          <div class="actions" id="ap-fin" style="margin-top:12px" hidden></div>`;
+      };
+      const set = (key, st, note) => { const s = steps.find((x) => x.key === key); if (s) { s.st = st; if (note !== undefined) s.note = note; } render(); };
+      render();
+
+      // token layout: a compact block near the top-left; the DM drags to taste
+      const placed = {};                 // monster_index → count (for A/B/C labels)
+      const lay = { x: 2, y: 2, rowH: 1, startX: 2, wrapW: 14 };
+      const nextSlot = (size) => {
+        if (lay.x + size > lay.startX + lay.wrapW) { lay.x = lay.startX; lay.y += lay.rowH + 1; lay.rowH = 1; }
+        const p = { x: lay.x, y: lay.y };
+        lay.x += size + 1; lay.rowH = Math.max(lay.rowH, size);
+        return p;
+      };
+      async function placeGroup(encId, m, count) {
+        const size = SIZE_OF[m.size] || 1;
+        for (let n = 0; n < count; n++) {
+          const repeats = placed[m.index] || 0; placed[m.index] = repeats + 1;
+          const letter = String.fromCharCode(65 + (repeats % 26)) + (repeats >= 26 ? Math.floor(repeats / 26) + 1 : "");
+          const p = nextSlot(size);
+          await vtt.tokens.add({
+            encounter_id: encId, kind: "monster", monster_index: m.index,
+            label: `${m.name} ${letter}`, x: p.x, y: p.y, size, color: "",
+            hp_current: m.hp, hp_max: m.hp, conditions: [], hidden: false, initiative: null,
+          });
+        }
+      }
+
+      guard(async () => {
+        const warnings = [];
+        // 1. create the encounter (inactive; the DM reviews, then Go live)
+        let enc;
+        try {
+          enc = await vtt.encounters.save({ name: title, map_id: null, grid: { cell: 70, feet: 5, show: true }, active: false });
+          if (enc && !encounters.some((e) => e.id === enc.id)) encounters.unshift(enc);
+          set("enc", "done");
+        } catch (e) {
+          set("enc", "err", e.message || "failed");
+          finish(null, ["Couldn't create the encounter — nothing was built."]);
+          return;
+        }
+
+        // 2. battle map (optional, non-fatal)
+        if (wantMap) {
+          set("map", "run");
+          try {
+            const r = await ai.generate({ campaignId: getCampaign(), kind: "map", prompt: mapPrompt });
+            if (r?.mapId) {
+              await vtt.encounters.save({ id: enc.id, map_id: r.mapId });
+              enc.map_id = r.mapId;
+              allMaps = await maps.list().catch(() => allMaps);   // so applyMap can find it
+              set("map", "done");
+            } else set("map", "done", "drawn, but no map id returned");
+          } catch (e) {
+            const m = e.code === "not-configured" ? "AI images not set up — skipped" : (e.message || "map failed");
+            set("map", "err", m); warnings.push("Map: " + m);
+          }
+        }
+
+        // 3. monsters: resolve to SRD/homebrew, generating custom ones as needed
+        for (let i = 0; i < rows.length; i++) {
+          const r = rows[i], key = "mon" + i;
+          set(key, "run");
+          let m = r.resolved;
+          if (!m) {
+            try {
+              const gen = await ai.generateMonster({ campaignId: getCampaign(), prompt: r.homebrew_prompt || r.name });
+              if (!gen) throw new Error("no stat block");
+              const cr = String(gen.cr || r.cr || "");
+              const saved = await homebrewMonsters.save({ name: gen.name || r.name, cr, data: gen, art_path: null });
+              const id = saved?.id;
+              if (!id) throw new Error("couldn't save");
+              hbById[id] = { id, name: gen.name || r.name, cr, data: gen, art_path: null };  // resolve immediately
+              m = hbToMonster(hbById[id]);
+            } catch (e) {
+              const note = e.code === "not-configured" ? "AI monsters not set up — skipped" : (e.message || "generation failed");
+              set(key, "err", note); warnings.push(`${r.name}: ${note}`);
+              continue;
+            }
+          }
+          try { await placeGroup(enc.id, m, r.count); set(key, "done"); }
+          catch (e) { set(key, "err", e.message || "placement failed"); warnings.push(`${r.name}: couldn't place`); }
+        }
+
+        // 4. open it (loads tokens + map, renders board & panels)
+        set("open", "run");
+        try {
+          current = enc;
+          await loadEncounter();
+          set("open", "done");
+        } catch (e) {
+          set("open", "err", e.message || "couldn't open");
+          warnings.push("Built, but couldn't open it automatically — pick it from the encounter list.");
+        }
+        finish(enc, warnings);
+      });
+
+      function finish(enc, warnings) {
+        const fin = body.querySelector("#ap-fin");
+        if (fin) {
+          fin.hidden = false;
+          fin.innerHTML = `
+            ${warnings.length
+              ? `<p class="small" style="color:var(--ember); margin:0 0 8px">${warnings.map(esc).join("<br>")}</p>`
+              : `<p class="small" style="color:var(--moss); margin:0 0 8px">Ready. Review the board, then <strong>⚑ Go live</strong> when the party arrives.</p>`}
+            <button class="btn" id="ap-done">Done</button>`;
+          const d = fin.querySelector("#ap-done"); if (d) d.onclick = modal.close;
+        }
+        if (enc) toast(warnings.length ? "Encounter built (a couple of steps were skipped)" : "Encounter ready — ⚑ Go live when you're set");
+      }
+    }
   }
 
   /* ═══════════ side panel ═══════════ */
