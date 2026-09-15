@@ -1177,6 +1177,35 @@ export const homebrewItems = {
   },
 };
 
+/* ═══ Homebrew origins (shared player options: races, subclasses, …) ═══
+   One table keyed by `kind`. Party members read, DM writes. `data`
+   is a blob the character rules engine consumes (raceInfo / custom
+   subclass), so applying one to a sheet re-derives correctly. */
+export const homebrewOptions = {
+  list: async (kind) => {
+    if (!sb) return (DEMO.homebrewOptions || []).filter(inCampaign).filter((o) => !kind || o.kind === kind);
+    let query = scope(sb.from("homebrew_options").select("*"));
+    if (kind) query = query.eq("kind", kind);
+    return q(query.order("created_at", { ascending: false }));
+  },
+  // row: {id?, kind, name, data}
+  save: async (row) => {
+    const fields = { kind: row.kind, name: row.name || "New option", data: row.data || {} };
+    if (!sb) {
+      DEMO.homebrewOptions ||= [];
+      if (row.id) return Object.assign(DEMO.homebrewOptions.find((m) => m.id === row.id) || {}, fields);
+      const m = { ...fields, id: uid(), campaign_id: campaignId, created_at: new Date().toISOString() };
+      DEMO.homebrewOptions.push(m); return m;
+    }
+    if (row.id) { await q(sb.from("homebrew_options").update(fields).eq("id", row.id)); return { id: row.id }; }
+    return q(sb.from("homebrew_options").insert(stamp(fields)).select("id").single());
+  },
+  remove: async (id) => {
+    if (!sb) return (DEMO.homebrewOptions = (DEMO.homebrewOptions || []).filter((m) => m.id !== id));
+    await q(sb.from("homebrew_options").delete().eq("id", id));
+  },
+};
+
 /* ═══ Party roster (links to D&D Beyond) ═══ */
 export const party = {
   list: async () => (sb ? q(scope(sb.from("party_characters").select("*")).order("created_at")) : DEMO.party.filter(inCampaign)),
