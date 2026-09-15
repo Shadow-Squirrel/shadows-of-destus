@@ -1274,9 +1274,13 @@ async function main() {
     const stat = (label, val) =>
       val ? `<div><div class="muted" style="font-size:11px; text-transform:uppercase; letter-spacing:.05em">${esc(label)}</div>
              <div style="font-size:13px">${esc(String(val))}</div></div>` : "";
+    // SRD spells carry a `dc` object and a string `attack`; custom/homebrew
+    // spells carry a `save` ability string and a boolean `attack` — handle both.
     const saveLine = sp.dc
       ? `${String(sp.dc.ability || "").toUpperCase()} save${sp.dc.success ? ` · ${sp.dc.success} on save` : ""}`
-      : (sp.attack ? `${cap(sp.attack)} spell attack` : "");
+      : sp.save
+        ? `${String(sp.save).toUpperCase()} save`
+        : (sp.attack ? (typeof sp.attack === "string" ? `${cap(sp.attack)} spell attack` : "Spell attack") : "");
     let dmg = "";
     if (sp.damage) {
       const d = sp.damage;
@@ -1284,6 +1288,7 @@ async function main() {
                  : d.atChar ? Object.values(d.atChar)[0] : (d.dice || "");
       dmg = [base, d.type].filter(Boolean).join(" ");
     } else if (sp.heal) dmg = "Healing";
+    else if (sp.dmg) dmg = [sp.dmg, sp.dmgType].filter(Boolean).join(" ");
     const body = `
       <div class="small muted" style="margin:-6px 0 12px">${esc(spellMetaLine(sp))}${sp.concentration ? " · Concentration" : ""}${sp.ritual ? " · Ritual" : ""}</div>
       <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px 16px; margin-bottom:14px">

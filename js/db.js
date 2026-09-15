@@ -1057,6 +1057,32 @@ export const ai = {
     if (data?.error) throw new Error(data.error);
     return data?.plan || null;
   },
+  // {campaignId, kind:'spell'|…, prompt} → a schema-shaped draft object for
+  // that homebrew editor (see supabase/functions/generate-homebrew). Draws the
+  // SAME AI *text* budget as monsters. Throws .code==='not-configured' when
+  // unset, or the database's clean cap message.
+  generateHomebrew: async ({ campaignId, kind, prompt }) => {
+    if (!sb) throw new Error("AI generation needs the live database — it isn't available in demo mode.");
+    const cid = campaignId || campaignId === 0 ? campaignId : getCampaign();
+    const { data, error } = await sb.functions.invoke("generate-homebrew", {
+      body: { campaignId: cid, kind, prompt },
+    });
+    if (error) {
+      let msg = error.message || "Generation failed";
+      try {
+        const b = await error.context.json();
+        if (b?.error === "not-configured") throw notConfigured();
+        if (b?.error) msg = b.error;
+      } catch (inner) {
+        if (inner?.code === "not-configured") throw inner;
+        if (/Failed to send|Function not found|404|not found/i.test(msg)) throw notConfigured();
+      }
+      throw new Error(msg);
+    }
+    if (data?.error === "not-configured") throw notConfigured();
+    if (data?.error) throw new Error(data.error);
+    return data?.result || null;
+  },
   // The signed-in DM's AI *text* usage this month, or null if not set up.
   textUsage: async () => {
     if (!sb) return null;
@@ -1092,6 +1118,35 @@ export const homebrewMonsters = {
   remove: async (id) => {
     if (!sb) return (DEMO.homebrewMonsters = (DEMO.homebrewMonsters || []).filter((m) => m.id !== id));
     await q(sb.from("homebrew_monsters").delete().eq("id", id));
+  },
+};
+
+/* ═══ Homebrew spells (a campaign's shared custom spellbook) ═══
+   Same ownership as monsters: party members read, only a DM writes.
+   `data` is the custom-spell object the character model understands
+   (js/dnd/model.js), so a spell added to a sheet casts + animates
+   through the existing custom-spell plumbing. */
+export const homebrewSpells = {
+  list: async () =>
+    sb
+      ? q(scope(sb.from("homebrew_spells").select("*")).order("created_at", { ascending: false }))
+      : (DEMO.homebrewSpells || []).filter(inCampaign),
+  // row: {id?, name, level, school, data}
+  save: async (row) => {
+    const lvl = Number.isFinite(+row.level) ? Math.max(0, Math.min(9, +row.level)) : 0;
+    const fields = { name: row.name || "New spell", level: lvl, school: row.school || "", data: row.data || {} };
+    if (!sb) {
+      DEMO.homebrewSpells ||= [];
+      if (row.id) return Object.assign(DEMO.homebrewSpells.find((m) => m.id === row.id) || {}, fields);
+      const m = { ...fields, id: uid(), campaign_id: campaignId, created_at: new Date().toISOString() };
+      DEMO.homebrewSpells.push(m); return m;
+    }
+    if (row.id) { await q(sb.from("homebrew_spells").update(fields).eq("id", row.id)); return { id: row.id }; }
+    return q(sb.from("homebrew_spells").insert(stamp(fields)).select("id").single());
+  },
+  remove: async (id) => {
+    if (!sb) return (DEMO.homebrewSpells = (DEMO.homebrewSpells || []).filter((m) => m.id !== id));
+    await q(sb.from("homebrew_spells").delete().eq("id", id));
   },
 };
 

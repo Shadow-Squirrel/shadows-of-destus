@@ -73,6 +73,7 @@ const NAV = [
   ["codex.html", "🐉 Codex"],
   ["notes.html", "🖋️ Notes"],
   ["characters.html", "🧙 Characters"],
+  ["spells.html", "✨ Spellbook"],
   ["monsters.html", "👹 Bestiary"],
   ["vtt.html", "⚔️ Battle"],
   ["dice.html", "🎲 Dice"],
