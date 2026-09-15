@@ -3,7 +3,14 @@
 // so each card links straight to the sheet. This page is also
 // where the DM manages the invite list.
 import { boot, esc, guard, toast } from "../shell.js";
-import { party, members } from "../db.js";
+import { party, members, discord, getCampaign, isReal } from "../db.js";
+
+const WEBHOOK_RE = /^https:\/\/(discord|discordapp)\.com\/api\/webhooks\//i;
+const postError = (msg) => ({
+  "not-connected": "Connect Discord first.",
+  "not-deployed": "The discord-post function isn't deployed yet — see docs/DISCORD.md.",
+  "webhook-invalid": "Discord rejected the webhook — it may have been deleted. Reconnect with a new URL.",
+}[msg] || msg || "Discord post failed");
 
 const ctx = await boot("party.html", "Party");
 if (ctx) main();
@@ -23,7 +30,8 @@ async function main() {
       (Tip: on D&D Beyond, set the character's privacy to <em>Public</em> so the whole table can open it.)</p>
       <div id="new-slot"></div>
       <div class="grid" id="grid"></div>
-      ${ctx.me.isDM ? `<div id="roster-slot" style="margin-top:26px"></div>` : ""}`;
+      ${ctx.me.isDM ? `<div id="roster-slot" style="margin-top:26px"></div>
+        <div id="discord-slot" style="margin-top:18px"></div>` : ""}`;
 
     const grid = root.querySelector("#grid");
     if (!chars.length) grid.innerHTML = `<div class="empty" style="grid-column:1/-1">No heroes enlisted yet.</div>`;
@@ -32,7 +40,7 @@ async function main() {
     const nb = root.querySelector("#new-c");
     if (nb) nb.onclick = () => { root.querySelector("#new-slot").replaceChildren(charForm()); nb.disabled = true; };
 
-    if (ctx.me.isDM) renderRoster();
+    if (ctx.me.isDM) { renderRoster(); renderDiscord(); }
   }
 
   function charCard(c) {
@@ -135,5 +143,153 @@ async function main() {
         render();
       });
     };
+  }
+
+  /* ── DM only: connect Discord (webhook) ── */
+  async function renderDiscord() {
+    const slot = root.querySelector("#discord-slot");
+    if (!slot) return;
+    if (!isReal()) {
+      slot.innerHTML = `<div class="card"><h3 class="section">🔗 Discord <span class="pill gold">DM only</span></h3>
+        <p class="muted small">Connecting Discord needs the live database — not available in demo mode.</p></div>`;
+      return;
+    }
+    let cfg = null;
+    try { cfg = await discord.get(getCampaign()); } catch { cfg = null; }
+    cfg ? renderConnected(slot, cfg) : renderConnect(slot);
+  }
+
+  // Not connected yet: paste a channel webhook URL.
+  function renderConnect(slot) {
+    slot.innerHTML = `
+      <div class="card">
+        <h3 class="section">🔗 Connect Discord <span class="pill gold">DM only</span></h3>
+        <p class="muted small" style="margin-top:-2px">Let Onyx post game reminders, session recaps, announcements and (optionally) dice
+          results to your table's Discord channel. It only ever <strong>posts</strong> — no bot, no login.</p>
+        <details style="margin:6px 0 10px">
+          <summary class="muted small" style="cursor:pointer">How do I get a webhook URL?</summary>
+          <ol class="muted small" style="margin:6px 0 0; padding-left:18px">
+            <li>In Discord: <strong>Server Settings → Integrations → Webhooks → New Webhook</strong>.</li>
+            <li>Pick the channel it should post to, then <strong>Copy Webhook URL</strong>.</li>
+            <li>Paste it below. (Keep it private — anyone with it can post to that channel.)</li>
+          </ol>
+        </details>
+        <form class="row" style="gap:8px; flex-wrap:wrap">
+          <input type="url" class="grow" name="url" placeholder="https://discord.com/api/webhooks/…" required style="min-width:240px" />
+          <button class="btn">Connect &amp; send a test</button>
+        </form>
+        <p class="muted small" id="dc-msg" style="margin:8px 0 0"></p>
+      </div>`;
+    slot.querySelector("form").onsubmit = (e) => {
+      e.preventDefault();
+      const url = new FormData(e.target).get("url").trim();
+      const msg = slot.querySelector("#dc-msg");
+      if (!WEBHOOK_RE.test(url)) { msg.textContent = "⚠ That doesn't look like a Discord webhook URL."; return; }
+      const btn = slot.querySelector("button");
+      btn.disabled = true; msg.textContent = "Connecting and sending a test message…";
+      guard(async () => {
+        try {
+          await discord.save(getCampaign(), { webhook_url: url, enabled: true, dice_mode: "off" });
+          await discord.post({ type: "test" });
+          toast("Discord connected — check your channel for the test message");
+          renderDiscord();
+        } catch (err) {
+          btn.disabled = false;
+          msg.textContent = "⚠ " + postError(err.message);
+        }
+      });
+    };
+  }
+
+  // Connected: status + dice mode + the three post composers.
+  function renderConnected(slot, cfg) {
+    const modeOpt = (v, label) => `<option value="${v}" ${cfg.dice_mode === v ? "selected" : ""}>${label}</option>`;
+    slot.innerHTML = `
+      <div class="card">
+        <div class="row" style="justify-content:space-between; align-items:center">
+          <h3 class="section" style="margin:0">🔗 Discord <span class="pill ${cfg.enabled ? "moss" : "steel"}">${cfg.enabled ? "connected" : "paused"}</span></h3>
+          <span class="row" style="gap:6px">
+            <button class="btn-ghost" id="dc-test">Send test</button>
+            <button class="btn-danger" id="dc-disc">Disconnect</button>
+          </span>
+        </div>
+        <div class="row" style="gap:14px; align-items:center; margin-top:8px; flex-wrap:wrap">
+          <label class="checkline" style="margin:0"><input type="checkbox" id="dc-enabled" ${cfg.enabled ? "checked" : ""} /> Posting on</label>
+          <label class="field" style="margin:0">Auto-post dice
+            <select id="dc-dice" style="width:auto; margin-left:6px">
+              ${modeOpt("off", "Off")}${modeOpt("crits", "Crits & fumbles only")}${modeOpt("all", "Every roll (chatty)")}
+            </select>
+          </label>
+        </div>
+
+        <div style="margin-top:14px; display:grid; gap:12px">
+          <div>
+            <label class="field">⚔ Game reminder</label>
+            <div class="row" style="gap:8px; flex-wrap:wrap">
+              <input type="text" id="rem-title" class="grow" placeholder="Curse of the Crimson King — tonight 7:00 PM" style="min-width:220px" />
+            </div>
+            <textarea id="rem-msg" style="min-height:44px; margin-top:6px" placeholder="Bring your sheets. We pick up at the sunken gate."></textarea>
+            <div class="actions"><button class="btn" data-post="reminder">Post reminder</button></div>
+          </div>
+          <div>
+            <label class="field">📖 Session recap</label>
+            <input type="text" id="rec-title" placeholder="Session 14 — The Sunken Gate" />
+            <textarea id="rec-msg" style="min-height:60px; margin-top:6px" placeholder="What happened, cliffhangers, XP…"></textarea>
+            <div class="actions"><button class="btn" data-post="recap">Post recap</button></div>
+          </div>
+          <div>
+            <label class="field">📣 Announcement</label>
+            <textarea id="ann-msg" style="min-height:44px" placeholder="Any message to drop in the channel…"></textarea>
+            <div class="actions"><button class="btn" data-post="announce">Post announcement</button></div>
+          </div>
+        </div>
+        <p class="muted small" id="dc-msg" style="margin:10px 0 0"></p>
+      </div>`;
+
+    const msg = (s) => { slot.querySelector("#dc-msg").textContent = s || ""; };
+    const settings = () => ({ webhook_url: null, enabled: slot.querySelector("#dc-enabled").checked, dice_mode: slot.querySelector("#dc-dice").value });
+
+    // toggling posting / dice mode saves immediately (keep the stored URL)
+    const saveSettings = () => guard(async () => {
+      try {
+        const s = settings();
+        // re-fetch the URL isn't exposed here; upsert needs it, so read it back first
+        const cur = await discord.get(getCampaign());
+        await discord.save(getCampaign(), { webhook_url: cur.webhook_url, enabled: s.enabled, dice_mode: s.dice_mode });
+        msg("Saved.");
+      } catch (e) { msg("⚠ " + postError(e.message)); }
+    });
+    slot.querySelector("#dc-enabled").onchange = saveSettings;
+    slot.querySelector("#dc-dice").onchange = saveSettings;
+
+    slot.querySelector("#dc-test").onclick = () => guard(async () => {
+      try { await discord.post({ type: "test" }); toast("Test sent — check your channel"); }
+      catch (e) { msg("⚠ " + postError(e.message)); }
+    });
+
+    slot.querySelector("#dc-disc").onclick = () => {
+      if (!confirm("Disconnect Discord from this campaign? Onyx will stop posting. (Your Discord channel is untouched.)")) return;
+      guard(async () => { await discord.disconnect(getCampaign()); toast("Discord disconnected"); renderDiscord(); });
+    };
+
+    slot.querySelectorAll("[data-post]").forEach((btn) => {
+      btn.onclick = () => {
+        const type = btn.dataset.post;
+        const title = type === "reminder" ? slot.querySelector("#rem-title").value.trim()
+          : type === "recap" ? slot.querySelector("#rec-title").value.trim() : "";
+        const message = type === "reminder" ? slot.querySelector("#rem-msg").value.trim()
+          : type === "recap" ? slot.querySelector("#rec-msg").value.trim()
+          : slot.querySelector("#ann-msg").value.trim();
+        if (!title && !message) { msg("⚠ Write something to post first."); return; }
+        btn.disabled = true; msg("Posting…");
+        guard(async () => {
+          try {
+            await discord.post({ type, title, message });
+            toast("Posted to Discord");
+            btn.disabled = false; msg("Posted ✓");
+          } catch (e) { btn.disabled = false; msg("⚠ " + postError(e.message)); }
+        });
+      };
+    });
   }
 }
