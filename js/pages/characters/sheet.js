@@ -1114,8 +1114,9 @@ export function renderSheet(root, ctx, opts) {
     const items = char.equipment || [];
     const rows = items.map((e, i) => {
       const equippable = e.kind === "weapon" || e.kind === "armor";
+      const hb = e.hb || null;   // homebrew item detail carried onto the sheet (from the Armory)
       return `<div class="spell-row"><div class="row">
-        <span class="sp-name" style="flex:1">${esc(itemName(e))}</span>
+        <span class="sp-name" style="flex:1">${esc(itemName(e))}${hb && hb.rarity ? ` <span class="pill mystic" style="margin-left:5px">${esc(hb.rarity)}</span>` : ""}${hb && hb.attunement ? ` <span class="sp-meta" title="Requires attunement">(A)</span>` : ""}</span>
         ${canEdit ? `
           <span class="row" style="gap:4px">
             <button class="x-note" data-qty="${i}:-1" title="Fewer">−</button>
@@ -1126,7 +1127,10 @@ export function renderSheet(root, ctx, opts) {
           ? `<label class="checkline"><input type="checkbox" data-equip="${i}"${e.equipped ? " checked" : ""} /> equipped</label>`
           : (e.equipped ? `<span class="pill moss">equipped</span>` : "")) : ""}
         ${canEdit ? `<button class="x-note" data-item-del="${i}" title="Remove">✕</button>` : ""}
-      </div></div>`;
+      </div>${hb ? `<details class="fold"><summary>${esc([cap(hb.type), hb.attunement ? `attunement${hb.attunement_note ? ` ${hb.attunement_note}` : ""}` : ""].filter(Boolean).join(" · ")) || "details"}</summary>
+        ${hb.props ? `<p style="margin:4px 0"><strong>${esc(hb.props)}</strong></p>` : ""}
+        ${hb.charges ? `<p class="sp-meta" style="margin:2px 0">${esc(hb.charges)}</p>` : ""}
+        ${hb.desc ? md(hb.desc) : ""}</details>` : ""}</div>`;
     }).join("");
     const adders = canEdit ? `
       <div class="rule"></div>

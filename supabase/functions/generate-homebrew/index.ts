@@ -75,8 +75,38 @@ const SPELL_JSON_INSTRUCTION =
   "ritual (bool), attack (bool), save (''|str|dex|con|int|wis|cha), dmg, dmgType, aoe_type, " +
   "aoe_size (integer), higher, desc. Use \"\" for text that doesn't apply and 0 for aoe_size when not an area.";
 
+// ── magic item schema ──
+const ITEM_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    name: { type: "string" },
+    type: { type: "string", description: "one of: weapon, armor, shield, potion, scroll, wand, rod, staff, ring, wondrous, gear" },
+    rarity: { type: "string", description: "one of: common, uncommon, rare, very rare, legendary, artifact" },
+    attunement: { type: "boolean", description: "true if it requires attunement" },
+    attunement_note: { type: "string", description: "e.g. 'by a spellcaster' (or '')" },
+    props: { type: "string", description: "short mechanical summary, e.g. '+1 to attack and damage rolls; deals an extra 1d6 fire' (or '')" },
+    charges: { type: "string", description: "e.g. '3 charges, regains 1d3 at dawn' (or '')" },
+    weight: { type: "string", description: "e.g. '3 lb.' (or '')" },
+    cost: { type: "string", description: "rough value, e.g. '500 gp' (or '')" },
+    desc: { type: "string", description: "the full item description, 2-5 sentences" },
+  },
+  required: ["name", "type", "rarity", "attunement", "attunement_note", "props", "charges", "weight", "cost", "desc"],
+};
+const ITEM_SYSTEM = [
+  "You are an expert Dungeons & Dragons 5e (2014 SRD) magic-item designer.",
+  "Given a short description, design ONE balanced, ready-to-use item. Keep its power in line with its rarity",
+  "(compare to SRD items of the same rarity). Set attunement only when the item warrants it. Use '' for any",
+  "field that doesn't apply. Write evocative but concise item text.",
+].join(" ");
+const ITEM_JSON_INSTRUCTION =
+  " Respond with ONLY a single JSON object — no prose, no markdown fences — with keys: " +
+  "name, type, rarity, attunement (bool), attunement_note, props, charges, weight, cost, desc. " +
+  "Use \"\" for any text field that doesn't apply.";
+
 const SCHEMAS: Record<string, { schema: unknown; system: string; jsonInstruction: string; noun: string }> = {
   spell: { schema: SPELL_SCHEMA, system: SPELL_SYSTEM, jsonInstruction: SPELL_JSON_INSTRUCTION, noun: "spell" },
+  item: { schema: ITEM_SCHEMA, system: ITEM_SYSTEM, jsonInstruction: ITEM_JSON_INSTRUCTION, noun: "item" },
 };
 
 function statusForDbError(msg: string): number {

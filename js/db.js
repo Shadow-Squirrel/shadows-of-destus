@@ -1150,6 +1150,33 @@ export const homebrewSpells = {
   },
 };
 
+/* ═══ Homebrew items (a campaign's shared armory) ═══
+   Same ownership as spells/monsters: party members read, DM writes.
+   `data` is the full item (type, rarity, attunement, props, desc);
+   giving one to a hero copies it into that sheet's inventory. */
+export const homebrewItems = {
+  list: async () =>
+    sb
+      ? q(scope(sb.from("homebrew_items").select("*")).order("created_at", { ascending: false }))
+      : (DEMO.homebrewItems || []).filter(inCampaign),
+  // row: {id?, name, type, rarity, data}
+  save: async (row) => {
+    const fields = { name: row.name || "New item", type: row.type || "", rarity: row.rarity || "", data: row.data || {} };
+    if (!sb) {
+      DEMO.homebrewItems ||= [];
+      if (row.id) return Object.assign(DEMO.homebrewItems.find((m) => m.id === row.id) || {}, fields);
+      const m = { ...fields, id: uid(), campaign_id: campaignId, created_at: new Date().toISOString() };
+      DEMO.homebrewItems.push(m); return m;
+    }
+    if (row.id) { await q(sb.from("homebrew_items").update(fields).eq("id", row.id)); return { id: row.id }; }
+    return q(sb.from("homebrew_items").insert(stamp(fields)).select("id").single());
+  },
+  remove: async (id) => {
+    if (!sb) return (DEMO.homebrewItems = (DEMO.homebrewItems || []).filter((m) => m.id !== id));
+    await q(sb.from("homebrew_items").delete().eq("id", id));
+  },
+};
+
 /* ═══ Party roster (links to D&D Beyond) ═══ */
 export const party = {
   list: async () => (sb ? q(scope(sb.from("party_characters").select("*")).order("created_at")) : DEMO.party.filter(inCampaign)),

@@ -9,25 +9,29 @@ The whole homebrew family shares **one** AI *text* budget and **one** Edge
 Function, so this is a small, one-time setup that covers every current and future
 homebrew editor.
 
-## 1. Apply the migration
+## 1. Apply the migrations
 
-`supabase/migrations/20260919120000_homebrew_spells.sql` creates the
-`homebrew_spells` table and **widens the shared AI-text budget** (added with the
-Bestiary) so its reserve/complete/fail gate accepts every homebrew `kind`
-(spell, item, feat, …) — not just `monster`. It reuses the existing
-`ai_text_config` caps, so there's nothing new to configure.
+Each homebrew editor adds one small content table:
+
+- `20260919120000_homebrew_spells.sql` — the **Spellbook** table, and it
+  **widens the shared AI-text budget** (added with the Bestiary) so the
+  reserve/complete/fail gate accepts every homebrew `kind` (spell, item, feat, …),
+  not just `monster`. Reuses the existing `ai_text_config` caps.
+- `20260920120000_homebrew_items.sql` — the **Armory** table.
 
 ```
 npx supabase db push
 ```
 
-Or paste the file into the Supabase **SQL Editor** and run it (it's safe to run
-more than once).
+Or paste each file into the Supabase **SQL Editor** and run it (all are safe to
+run more than once). Building by hand needs only these; the ✨ buttons also need
+steps 2–3.
 
 ## 2. Deploy the one Edge Function
 
-`generate-homebrew` is the single AI drafter for all homebrew editors — it takes
-a `kind` and returns a schema-shaped draft.
+`generate-homebrew` is the single AI drafter for all homebrew editors (spells and
+items today) — it takes a `kind` and returns a schema-shaped draft. Re-deploy it
+whenever a new editor adds a kind.
 
 ```
 npx supabase functions deploy generate-homebrew
@@ -61,11 +65,16 @@ As always, the hard backstop is the spend limit on your provider account — set
 it (see [`AI-MONSTERS.md`](./AI-MONSTERS.md)). Every draft is reserved in the
 database **before** the paid call, and a failed draft never counts against quota.
 
-## What you get in the Spellbook
+## What you get
 
-A homebrew spell you author (school, level, range, save/attack, damage + type,
-area, duration, description, "at higher levels") can be **added to any
-character** from its card. It lands on the sheet as a custom spell — editable
+**Spellbook** — a homebrew spell you author (school, level, range, save/attack,
+damage + type, area, duration, description, "at higher levels") can be **added to
+any character** from its card. It lands on the sheet as a custom spell — editable
 there — and when that character casts it on the **Battle map**, the animation
 engine reads its **school**, **damage type**, and **area** and gives it the
-matching volumetric effect automatically. Author once, reuse across the party.
+matching volumetric effect automatically.
+
+**Armory** — a homebrew magic item (type, rarity, attunement, properties,
+charges, value, description) can be **handed to any character** from its card. It
+drops into that sheet's inventory carrying all its details. Author once, reuse
+across the party.
