@@ -77,11 +77,14 @@ token/HP/initiative shape as SRD monsters). Editable before use.
   built). Strong network effect; D&D Beyond put LFG on its 2026 roadmap, so
   discovery is strategically validated. Needs a public "listing" opt-in per
   campaign + moderation.
-- **Deep Discord integration** — embrace Discord rather than compete: connect a
-  Discord account, then Onyx posts to the server: game reminders ("⚔ Game
-  Tonight — Curse of the Crimson King, 7:00 PM [Join Session]"), **session
-  recaps** ("📖 Session 14 Recap Available"), and optionally dice results /
-  character updates. Discord OAuth + a bot/webhook; per-campaign channel config.
+- **Deep Discord integration — SHIPPED (v1, webhook-based).** DMs connect a
+  channel **webhook** on the Party page (🔗 Discord, DM-only); Onyx posts game
+  reminders, session recaps, announcements, and (optionally) dice results
+  (off / crits-only / every roll). Manual posts via the `discord-post` Edge
+  Function; auto-dice via a `rolls` trigger + pg_net. Webhook URL is a secret,
+  stored DM-only (`campaign_discord`). See [`DISCORD.md`](./DISCORD.md).
+  *Future v2:* a bot/OAuth for two-way features (slash commands, [Join Session]
+  buttons) — needs a hosted interactions endpoint, so deferred.
 
 ## Legal & trust
 - **Privacy Policy / Terms / DMCA process** — Terms, Privacy, and Licenses pages

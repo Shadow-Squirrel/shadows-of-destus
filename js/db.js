@@ -1304,6 +1304,50 @@ export const npcs = {
   },
 };
 
+/* ═══ Discord (per-campaign webhook, DM-only) ═══
+   The webhook URL is a secret — this whole config is DM-only (RLS). Onyx
+   posts to it server-side (the discord-post Edge Function for manual
+   reminders/recaps/announcements; a DB trigger for auto dice results), so
+   the URL never reaches a player's browser. */
+export const discord = {
+  // The DM's config for a campaign: {webhook_url, enabled, dice_mode} or null.
+  get: async (campaignId) => {
+    const cid = campaignId || getCampaign();
+    if (!sb) return (DEMO.discord || {})[cid] || null;
+    return q(sb.from("campaign_discord").select("webhook_url, enabled, dice_mode").eq("campaign_id", cid).maybeSingle());
+  },
+  // Upsert the connection. row: {webhook_url, enabled, dice_mode}
+  save: async (campaignId, row) => {
+    const cid = campaignId || getCampaign();
+    const fields = {
+      campaign_id: cid, webhook_url: row.webhook_url,
+      enabled: row.enabled !== false, dice_mode: row.dice_mode || "off",
+    };
+    if (!sb) { DEMO.discord ||= {}; DEMO.discord[cid] = fields; return fields; }
+    return q(sb.from("campaign_discord").upsert(fields, { onConflict: "campaign_id" }).select("webhook_url, enabled, dice_mode").single());
+  },
+  disconnect: async (campaignId) => {
+    const cid = campaignId || getCampaign();
+    if (!sb) { if (DEMO.discord) delete DEMO.discord[cid]; return; }
+    await q(sb.from("campaign_discord").delete().eq("campaign_id", cid));
+  },
+  // Post a message via the discord-post Edge Function.
+  // {campaignId?, type:'reminder'|'recap'|'announce'|'test', title?, message?}
+  post: async ({ campaignId, type, title, message }) => {
+    if (!sb) throw new Error("Discord posting needs the live database — not available in demo mode.");
+    const cid = campaignId || getCampaign();
+    const { data, error } = await sb.functions.invoke("discord-post", { body: { campaignId: cid, type, title, message } });
+    if (error) {
+      let msg = error.message || "Discord post failed";
+      try { const b = await error.context.json(); if (b?.error) msg = b.error; }
+      catch { if (/Failed to send|Function not found|404|not found/i.test(msg)) msg = "not-deployed"; }
+      throw new Error(msg);
+    }
+    if (data?.error) throw new Error(data.error);
+    return data?.ok === true;
+  },
+};
+
 /* ═══ Party roster (links to D&D Beyond) ═══ */
 export const party = {
   list: async () => (sb ? q(scope(sb.from("party_characters").select("*")).order("created_at")) : DEMO.party.filter(inCampaign)),
