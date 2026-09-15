@@ -512,6 +512,30 @@ svg.die.landed { animation: die-land .38s cubic-bezier(.2, 2.1, .4, 1); }
 /* ── AI image generation ── */
 .ai-card { margin-bottom: 14px; border-left: 3px solid var(--mystic); }
 .ai-card textarea { width: 100%; }
+
+/* ── Adventures (AI DM-prep documents) ── */
+.scene-card { margin-bottom: 14px; }
+.scene-card .scene-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.scene-card .scene-num {
+  width: 1.7em; height: 1.7em; flex: none; display: grid; place-items: center;
+  border-radius: 50%; border: 1px solid var(--gold-soft); color: var(--gold);
+  font-family: var(--font-display); font-size: .82rem; background: rgba(212,165,49,.08);
+}
+/* boxed read-aloud text — set off so the DM can read it straight to the table */
+.read-aloud {
+  margin: 10px 0; padding: 12px 14px; border-radius: 8px;
+  border: 1px solid var(--border-soft); border-left: 3px solid var(--gold-soft);
+  background: rgba(212,165,49,.05); color: var(--ink, inherit); font-style: italic;
+}
+.read-aloud p { margin: 0 0 .5em; }
+.read-aloud p:last-child { margin-bottom: 0; }
+.read-aloud::before {
+  content: "Read aloud"; display: block; font-style: normal; font-size: .68rem;
+  letter-spacing: .12em; text-transform: uppercase; color: var(--gold); opacity: .8; margin-bottom: 6px;
+}
+.dm-note { margin: 8px 0 0; padding-left: 12px; border-left: 2px solid var(--border-soft); }
+.npc-card { padding: 12px 14px; }
+.npc-card .npc-line { margin: 3px 0 0; padding-left: 10px; border-left: 2px solid var(--mystic); font-style: italic; }
 .ai-style.active {
   color: var(--gold); border-color: var(--gold-soft);
   background: rgba(212,165,49,.10);
