@@ -10,7 +10,23 @@ table's shared dice feed.
 **Total running cost: $0.** GitHub Pages hosts the site; Supabase's free tier
 stores what people type.
 
-**⚔️ Live at: <https://shadow-squirrel.github.io/shadows-of-destus/>**
+**⚔️ Live at: <https://onyxdungeon.com>** (GitHub Pages, custom domain via `CNAME`)
+
+## Accounts & tiers
+
+The site has a **public front door** (`index.html` — the landing page, no
+login) and a **sign-in door** (`login.html`). Anyone can create a **free
+account**:
+
+| Tier | Who | Gets |
+|---|---|---|
+| 🗡️ **Adventurer** (free) | everyone who signs up | build heroes, join tables by invite link, play on the battle map, roll with the table, read the hub / notes / codex |
+| 🔥 **Dungeon Lord** (subscription) | whoever runs the table | everything above **plus** creating & running campaigns (the DM role), invites, encounters, homebrew editors, Discord, and every AI dungeon-prep tool |
+
+Tier names and the display price live in `js/config.js` (`TIERS`, `PRICING`).
+The paid tier is just the buyer's email in the `campaign_creators` allow-list —
+Stripe Checkout + a webhook grant/revoke it; see `docs/BILLING.md`. Until
+Stripe is configured the pricing page shows "coming soon" and nothing breaks.
 
 ---
 
@@ -32,7 +48,9 @@ it opens the front door only as far as those rules allow.
 ## Folder tour
 
 ```
-index.html, quests.html, ...   ← one thin file per page
+index.html                     ← PUBLIC landing page (no login) · js/pages/landing.js
+pricing.html, login.html       ← public plans page · the sign-in / create-account door
+hub.html, quests.html, ...     ← the signed-in app: one thin file per page (hub = campaign Home)
 css/style.css                  ← the whole look; colors are tokens at the top
 css/characters.css             ← builder + character-sheet styles
 js/config.js                   ← ★ the only file you edit by hand (name + keys)
@@ -94,9 +112,12 @@ and edits vanish on refresh.
    the DM).
 3. Same again with `supabase/seed-campaign.sql` — it loads the
    *Shadows of Destus* player primer onto the Home page.
-4. In **Authentication → Sign In / Providers → Email**, turn **off**
-   "Confirm email". (The invite list is the real gate; skipping confirmation
-   emails avoids Supabase's very low free email limits.)
+4. In **Authentication → Sign In / Providers → Email**: for a private table you
+   can leave "Confirm email" **off** (the invite list is the real gate, and it
+   avoids Supabase's very low free email limits). Once signups are **public**
+   — and definitely **before charging for the Dungeon Lord tier** — turn it
+   **on** and set up custom SMTP, so an unverified address can't claim a seat.
+   See `docs/ACCOUNTS.md`.
 5. In **Project Settings → API**, copy the **Project URL** and the
    **anon public** key into `js/config.js`. Never copy the `service_role`
    key anywhere.
@@ -123,8 +144,9 @@ and edits vanish on refresh.
 ## Everyday use
 
 - **Invite a player:** Party page → *Invite players* → add their email + display
-  name. They visit the site and *Create account* with that exact email.
-  Remove the email later and their access dies instantly.
+  name, or mint an invite link (Campaigns page). They create a free account
+  (or open the link) and land at your table. Remove the email later and their
+  access dies instantly.
 - **Add a map:** Maps page → **+ Add map** → pick the image straight off your
   computer (png/jpg/webp, up to 25 MB; DM only). New maps start **hidden**;
   players see nothing until you press **Reveal** — perfect for mid-session

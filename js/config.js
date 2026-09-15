@@ -15,6 +15,17 @@ export const CONFIG = {
   CAMPAIGN_NAME: "Shadows of Destus",    // default campaign name (legacy/demo only)
   TAGLINE: "It starts small. It does not stay that way.", // fallback tagline (legacy/demo)
 
+  // Account tiers (shown on the landing + pricing pages and in the app).
+  //   FREE  → everyone who signs up: build heroes, join tables, play.
+  //   DM    → the subscription: run your own campaigns + every AI feature.
+  TIERS: {
+    FREE: { name: "Adventurer", icon: "🗡️" },
+    DM:   { name: "Dungeon Lord", icon: "🔥" },
+  },
+  // ⚠ PLACEHOLDER price — set this to match the Price you create in Stripe
+  // (docs/BILLING.md). It's display-only; Stripe is the source of truth.
+  PRICING: { DM_PRICE: "$4.99", DM_PERIOD: "month" },
+
   SUPABASE_URL: "https://wmagwmnqmapasppgfpnj.supabase.co",
   SUPABASE_ANON_KEY: "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6IndtYWd3bW5xbWFwYXNwcGdmcG5qIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODg0NjIxODYsImV4cCI6MjEwNDAzODE4Nn0.UYA0pCNC8nJc7-gkUJJwo-Vmh8ldeDam0GGiDfnmyo0",
 };

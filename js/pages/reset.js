@@ -61,7 +61,7 @@ function renderInvalid() {
   card(`
     <h2>Reset link invalid</h2>
     <p class="muted small">This reset link is invalid or has expired — request a new one from the login page.</p>
-    <div class="actions"><a class="btn" href="./index.html">Back to sign in</a></div>`);
+    <div class="actions"><a class="btn" href="./login.html">Back to sign in</a></div>`);
 }
 
 // A valid recovery session is active — let them set a new password.
@@ -100,6 +100,6 @@ function renderDone() {
     <h2>Password updated</h2>
     <p class="muted small">Your password has been changed and you're signed in. Head to
     ${esc(CONFIG.APP_NAME)} to continue.</p>
-    <div class="actions"><a class="btn" href="./index.html">Enter ${esc(CONFIG.APP_NAME)}</a></div>`);
-  setTimeout(() => { location.href = "./index.html"; }, 2500);
+    <div class="actions"><a class="btn" href="./hub.html">Enter ${esc(CONFIG.APP_NAME)}</a></div>`);
+  setTimeout(() => { location.href = "./hub.html"; }, 2500);
 }
