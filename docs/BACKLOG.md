@@ -7,6 +7,16 @@ each item to what already exists so we don't rebuild.
 Positioning: **AI removes the boring prep, it does NOT play D&D for you.** Aligns
 with WotC's stated 2026 priority of cutting DM prep + tool/tab-switching.
 
+> **Status:** ⚡ single-encounter accelerator SHIPPED (`plan-encounter`, on the
+> Battle map). Full **Create-Adventure** SHIPPED — the 📖 Adventures page
+> (`adventures.html` / `js/pages/adventures.js`, `plan-adventure` function,
+> `adventures` table) drafts a whole adventure (named location, ordered scenes
+> with boxed read-aloud text + DM notes, a puzzle, a boss, NPCs, treasure, XP
+> budget) and stages any combat scene onto the Battle map. See
+> [`AI-ADVENTURES.md`](./AI-ADVENTURES.md). **Still open below:** the standalone
+> **NPC generator** (with portrait), the **monster generator** already exists as
+> the Bestiary, and **smart combat** (assist/confirm/apply).
+
 The flow the owner described:
 - **"Create Encounter"** + a natural-language brief (e.g. *"an abandoned dwarven
   mine for four level-6 characters, a hidden cult, three encounters, a puzzle,

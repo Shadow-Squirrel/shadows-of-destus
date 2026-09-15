@@ -609,7 +609,10 @@ async function main() {
     return null;
   }
 
-  function openAiPrep() {
+  // `seed` (optional) is a pre-made plan handed over from the Adventures
+  // page — {plan:{title,summary,map_prompt,monsters}, wantMap}. When present
+  // we skip the compose step and open straight on the review of that plan.
+  function openAiPrep(seed) {
     if (ctx.mode !== "real") { toast("AI prep needs the live database — not available in demo mode."); return; }
     const state = {
       description: "",
@@ -619,14 +622,15 @@ async function main() {
       })(),
       partySize: clampInt(tokens.filter((t) => t.kind === "pc").length || charsAll.length || 4, 1, 10, 4),
       difficulty: "medium",
-      wantMap: true,
+      wantMap: seed ? seed.wantMap !== false : true,
     };
 
     const modal = openModal("⚡ AI DM-prep", `<div id="ap-body"></div>`);
     const body = modal.el.querySelector("#ap-body");
     const msg = (s) => { const m = body.querySelector("#ap-msg"); if (m) m.textContent = s || ""; };
 
-    renderCompose();
+    if (seed && seed.plan && Array.isArray(seed.plan.monsters)) renderPreview(seed.plan);
+    else renderCompose();
 
     /* ── step 1: describe the fight ── */
     function renderCompose() {
@@ -1682,4 +1686,17 @@ async function main() {
 
   /* ═══════════ go ═══════════ */
   await guard(() => refreshAll());
+
+  /* ── handoff from the Adventures page (📖) ──
+     If the DM pressed "⚔ Stage on Battle map" on a combat scene, that page
+     stashed a plan and sent us here. Pop the ⚡ AI-prep straight into its
+     review step, pre-filled — the DM confirms, then it builds. */
+  if (isDM && ctx.mode === "real") {
+    let seed = null;
+    try {
+      const raw = sessionStorage.getItem("onyx:stageScene");
+      if (raw) { seed = JSON.parse(raw); sessionStorage.removeItem("onyx:stageScene"); }
+    } catch { seed = null; }
+    if (seed && seed.plan && Array.isArray(seed.plan.monsters)) openAiPrep(seed);
+  }
 }

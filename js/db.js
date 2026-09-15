@@ -1057,6 +1057,38 @@ export const ai = {
     if (data?.error) throw new Error(data.error);
     return data?.plan || null;
   },
+  // AI Create-Adventure: {campaignId, brief, partyLevel, partySize, difficulty,
+  // scenes, srd:[{i,n,cr}]} → a full adventure object
+  //   { title, location, overview, xp_budget, scenes:[{title, kind, boss,
+  //     read_aloud, dm_notes, monsters:[…], puzzle, treasure}],
+  //     npcs:[{name, role, personality, secret, voice, lines:[]}],
+  //     treasure_overall }
+  // Spends ONE slot of the AI *text* budget (the whole adventure). Any battle
+  // maps and generated monsters are billed separately when the DM stages a
+  // combat scene onto the Battle map. Throws .code==='not-configured' when
+  // unset, or the database's clean cap message.
+  planAdventure: async ({ campaignId, brief, partyLevel, partySize, difficulty, scenes, srd }) => {
+    if (!sb) throw new Error("AI generation needs the live database — it isn't available in demo mode.");
+    const cid = campaignId || campaignId === 0 ? campaignId : getCampaign();
+    const { data, error } = await sb.functions.invoke("plan-adventure", {
+      body: { campaignId: cid, brief, partyLevel, partySize, difficulty, scenes, srd },
+    });
+    if (error) {
+      let msg = error.message || "Adventure planning failed";
+      try {
+        const b = await error.context.json();
+        if (b?.error === "not-configured") throw notConfigured();
+        if (b?.error) msg = b.error;
+      } catch (inner) {
+        if (inner?.code === "not-configured") throw inner;
+        if (/Failed to send|Function not found|404|not found/i.test(msg)) throw notConfigured();
+      }
+      throw new Error(msg);
+    }
+    if (data?.error === "not-configured") throw notConfigured();
+    if (data?.error) throw new Error(data.error);
+    return data?.adventure || null;
+  },
   // {campaignId, kind:'spell'|…, prompt} → a schema-shaped draft object for
   // that homebrew editor (see supabase/functions/generate-homebrew). Draws the
   // SAME AI *text* budget as monsters. Throws .code==='not-configured' when
@@ -1203,6 +1235,35 @@ export const homebrewOptions = {
   remove: async (id) => {
     if (!sb) return (DEMO.homebrewOptions = (DEMO.homebrewOptions || []).filter((m) => m.id !== id));
     await q(sb.from("homebrew_options").delete().eq("id", id));
+  },
+};
+
+/* ═══ Adventures (saved AI DM-prep documents, per campaign) ═══
+   One row = one adventure the DM generated or wrote: a named location
+   plus a `data` blob (scenes, NPCs, treasure, XP note — see
+   js/pages/adventures.js). Same ownership as the homebrew content:
+   party members read, only a DM writes. Combat scenes are staged onto
+   the Battle map by handing their roster to the VTT's ⚡ AI-prep builder. */
+export const adventures = {
+  list: async () =>
+    sb
+      ? q(scope(sb.from("adventures").select("*")).order("created_at", { ascending: false }))
+      : (DEMO.adventures || []).filter(inCampaign),
+  // row: {id?, title, location, data}
+  save: async (row) => {
+    const fields = { title: row.title || "New adventure", location: row.location || "", data: row.data || {} };
+    if (!sb) {
+      DEMO.adventures ||= [];
+      if (row.id) return Object.assign(DEMO.adventures.find((m) => m.id === row.id) || {}, fields);
+      const m = { ...fields, id: uid(), campaign_id: campaignId, created_at: new Date().toISOString() };
+      DEMO.adventures.unshift(m); return m;
+    }
+    if (row.id) { await q(sb.from("adventures").update(fields).eq("id", row.id)); return { id: row.id }; }
+    return q(sb.from("adventures").insert(stamp(fields)).select("*").single());
+  },
+  remove: async (id) => {
+    if (!sb) return (DEMO.adventures = (DEMO.adventures || []).filter((m) => m.id !== id));
+    await q(sb.from("adventures").delete().eq("id", id));
   },
 };
 
