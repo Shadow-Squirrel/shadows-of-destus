@@ -1,31 +1,28 @@
 // ─────────────────────────────────────────────────────────────
-//  generate-monster — the ONLY thing that talks to the paid LLM
-//  (Anthropic / Claude). Deployed as a Supabase Edge Function
-//  (Deno). The ANTHROPIC_API_KEY lives in this function's secrets
-//  and NEVER reaches the browser.
+//  generate-monster — the ONLY thing that talks to the paid/free LLM.
+//  Deployed as a Supabase Edge Function (Deno). Provider keys live in
+//  this function's secrets and NEVER reach the browser.
 //
-//  Flow (money-critical order — reserve BEFORE spending), the same
-//  shape as generate-image:
+//  Two providers, chosen by which secrets are set (Cloudflare wins if
+//  both are present):
+//    • Cloudflare Workers AI (FREE — no credit card): set CF_ACCOUNT_ID
+//      + CF_API_TOKEN. Runs Llama 3.3 70B with JSON-schema output on the
+//      free 10k-neurons/day tier. Default model overridable via CF_MODEL.
+//    • Anthropic / Claude (paid, higher quality): set ANTHROPIC_API_KEY
+//      (+ optional ANTHROPIC_MODEL, default claude-opus-5).
+//
+//  Flow (money-critical order — reserve BEFORE spending), same as
+//  generate-image:
 //    1. Authenticate the caller from their JWT.
-//    2. No ANTHROPIC_API_KEY → 501 {error:"not-configured"} BEFORE
+//    2. No provider configured → 501 {error:"not-configured"} BEFORE
 //       reserving, so an unconfigured install never burns a slot.
-//    3. ai_reserve_text(): the DB checks DM-ship + the monthly caps
-//       ATOMICALLY and inserts a 'pending' row. A RAISE is forwarded
-//       (429 for the cap messages) and NO paid call has happened.
-//    4. Only now call Claude, forcing a single strict tool call so
-//       the model must return a schema-valid stat block.
-//    5. On any error → ai_fail_text() releases the slot (a failed
-//       generation costs no quota) → 502. On success →
-//       ai_complete_text() records the completed generation.
-//    6. Return the stat block JSON to the browser, which shows it in
-//       an editable form; the DM reviews, tweaks, and saves it
-//       (a normal RLS insert into homebrew_monsters) — art is a
-//       separate generate-image (kind:"portrait") call.
-//
-//  Model is swappable via the ANTHROPIC_MODEL secret (default
-//  claude-opus-5). The model is asked (via the system prompt) to
-//  return the stat block by calling the emit_monster tool; strict:true
-//  guarantees the arguments validate against the schema.
+//    3. ai_reserve_text(): DB checks DM-ship + monthly caps ATOMICALLY,
+//       inserts a 'pending' row. A RAISE is forwarded (429 for caps).
+//    4. Call the model, asking for one schema-shaped stat block.
+//    5. On error → ai_fail_text() releases the slot (failed = no quota) →
+//       502. On success → ai_complete_text().
+//    6. Return the stat block JSON; the browser shows it in an editable
+//       form for the DM to review, tweak, and save.
 // ─────────────────────────────────────────────────────────────
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
@@ -41,11 +38,7 @@ function json(body: unknown, status = 200): Response {
   });
 }
 
-// A stat block, described as a strict tool schema so Claude's output
-// validates exactly (strict: true requires additionalProperties:false
-// and every property listed in `required`; N/A fields come back as
-// "" or []). Freeform strings for saves/skills/senses keep the shape
-// small and read like a real stat block line.
+// A stat block described as a JSON schema. N/A fields come back as "" or [].
 const NAMED = {
   type: "array",
   items: {
@@ -70,7 +63,7 @@ const MONSTER_SCHEMA = {
     speed: { type: "string", description: "e.g. '30 ft., fly 60 ft.'" },
     str: { type: "integer" }, dex: { type: "integer" }, con: { type: "integer" },
     int: { type: "integer" }, wis: { type: "integer" }, cha: { type: "integer" },
-    saves: { type: "string", description: "saving-throw line, e.g. 'Dex +5, Con +7' (or '')" },
+    saves: { type: "string", description: "e.g. 'Dex +5, Con +7' (or '')" },
     skills: { type: "string", description: "e.g. 'Perception +5, Stealth +6' (or '')" },
     damage_resistances: { type: "string" },
     damage_immunities: { type: "string" },
@@ -82,7 +75,7 @@ const MONSTER_SCHEMA = {
     actions: NAMED,
     reactions: NAMED,
     legendary: { ...NAMED, description: "legendary actions (usually empty for low CR)" },
-    art_prompt: { type: "string", description: "one vivid sentence describing the creature's appearance, to seed portrait art" },
+    art_prompt: { type: "string", description: "one vivid sentence describing the creature's appearance" },
   },
   required: [
     "name", "size", "type", "alignment", "ac", "ac_note", "hp", "hp_dice", "speed",
@@ -96,10 +89,18 @@ const SYSTEM = [
   "You are an expert Dungeons & Dragons 5e (2014 SRD) monster designer.",
   "Given a short description, design ONE balanced, ready-to-run stat block.",
   "Match the requested challenge rating if one is given; otherwise choose a fitting CR.",
-  "Keep ability scores, AC, HP, attack bonuses, save DCs, and damage internally consistent",
+  "Keep ability scores, AC, HP, attack bonuses, save DCs and damage internally consistent",
   "with the CR (use the DMG monster math). Write vivid but concise action text.",
-  "Return the result by calling the emit_monster tool exactly once — never reply in prose.",
 ].join(" ");
+
+// Extra nudge for the JSON providers (Cloudflare): describe the exact shape.
+const JSON_INSTRUCTION =
+  " Respond with ONLY a single JSON object — no prose, no markdown fences — with these keys: " +
+  "name, size, type, alignment, ac (integer), ac_note, hp (integer), hp_dice, speed, " +
+  "str, dex, con, int, wis, cha (integers), saves, skills, damage_resistances, damage_immunities, " +
+  "condition_immunities, senses, languages, cr, and traits/actions/reactions/legendary " +
+  "(each an array of {name, text} objects — use [] if none), and art_prompt. " +
+  "Use \"\" for any text field that doesn't apply.";
 
 function statusForDbError(msg: string): number {
   if (/monthly limit reached|monthly AI budget reached/i.test(msg)) return 429;
@@ -108,47 +109,80 @@ function statusForDbError(msg: string): number {
   return 400;
 }
 
+function extractJson(s: string): Record<string, unknown> | null {
+  const cleaned = s.replace(/```(?:json)?/gi, "").trim();
+  const start = cleaned.indexOf("{"), end = cleaned.lastIndexOf("}");
+  if (start === -1 || end === -1 || end <= start) return null;
+  try { return JSON.parse(cleaned.slice(start, end + 1)); } catch { return null; }
+}
+
+// ── provider: Cloudflare Workers AI (free tier) ──────────────
+async function callCloudflare(prompt: string): Promise<Record<string, unknown>> {
+  const acct = Deno.env.get("CF_ACCOUNT_ID");
+  const token = Deno.env.get("CF_API_TOKEN");
+  if (!acct || !token) throw new Error("not-configured");
+  const model = Deno.env.get("CF_MODEL") || "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
+  const res = await fetch(
+    `https://api.cloudflare.com/client/v4/accounts/${acct}/ai/run/${model}`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [
+          { role: "system", content: SYSTEM + JSON_INSTRUCTION },
+          { role: "user", content: `Design a D&D 5e monster: ${prompt}` },
+        ],
+        max_tokens: 4096,
+        response_format: { type: "json_schema", json_schema: MONSTER_SCHEMA },
+      }),
+    },
+  );
+  if (!res.ok) throw new Error(`Cloudflare AI error ${res.status}: ${(await res.text()).slice(0, 400)}`);
+  const data = await res.json();
+  if (data?.success === false) {
+    const msg = Array.isArray(data.errors) ? data.errors.map((e: { message?: string }) => e.message).join("; ") : "unknown error";
+    throw new Error(`Cloudflare AI error: ${msg}`);
+  }
+  let out = data?.result?.response;
+  if (typeof out === "string") out = extractJson(out);
+  if (!out || typeof out !== "object") throw new Error("The model did not return a stat block. Try again.");
+  return out as Record<string, unknown>;
+}
+
+// ── provider: Anthropic / Claude (paid) ──────────────────────
 async function callClaude(prompt: string): Promise<Record<string, unknown>> {
   const key = Deno.env.get("ANTHROPIC_API_KEY");
   if (!key) throw new Error("not-configured");
   const model = Deno.env.get("ANTHROPIC_MODEL") || "claude-opus-5";
-
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
-    headers: {
-      "x-api-key": key,
-      "anthropic-version": "2023-06-01",
-      "content-type": "application/json",
-    },
+    headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
     body: JSON.stringify({
       model,
       max_tokens: 8000,
-      output_config: { effort: "medium" },   // balanced cost/quality for a stat block
-      system: SYSTEM,
+      output_config: { effort: "medium" },
+      system: SYSTEM + " Return the result by calling the emit_monster tool exactly once — never reply in prose.",
       messages: [{ role: "user", content: `Design a D&D 5e monster: ${prompt}` }],
-      tools: [{
-        name: "emit_monster",
-        description: "Return the finished, balanced stat block.",
-        input_schema: MONSTER_SCHEMA,
-        strict: true,           // guarantees the tool arguments validate against the schema
-      }],
-      // auto (not forced): thinking is on by default on Opus 5, and forced
-      // tool_choice is incompatible with extended thinking. The system prompt
-      // instructs the model to always call emit_monster; strict keeps it valid.
-      tool_choice: { type: "auto" },
+      tools: [{ name: "emit_monster", description: "Return the finished, balanced stat block.", input_schema: MONSTER_SCHEMA, strict: true }],
+      tool_choice: { type: "auto" },  // forced tool choice is incompatible with Opus 5's default thinking
     }),
   });
-  if (!res.ok) {
-    throw new Error(`Anthropic error ${res.status}: ${(await res.text()).slice(0, 400)}`);
-  }
+  if (!res.ok) throw new Error(`Anthropic error ${res.status}: ${(await res.text()).slice(0, 400)}`);
   const data = await res.json();
   if (data?.stop_reason === "refusal") throw new Error("The model declined this request. Try a different description.");
-  const block = Array.isArray(data?.content)
-    ? data.content.find((b: { type?: string }) => b.type === "tool_use")
-    : null;
+  const block = Array.isArray(data?.content) ? data.content.find((b: { type?: string }) => b.type === "tool_use") : null;
   const monster = block?.input;
   if (!monster || typeof monster !== "object") throw new Error("The model did not return a stat block. Try again.");
   return monster as Record<string, unknown>;
+}
+
+function providerConfigured(): boolean {
+  return (!!Deno.env.get("CF_ACCOUNT_ID") && !!Deno.env.get("CF_API_TOKEN")) || !!Deno.env.get("ANTHROPIC_API_KEY");
+}
+function generateMonster(prompt: string): Promise<Record<string, unknown>> {
+  if (Deno.env.get("CF_ACCOUNT_ID") && Deno.env.get("CF_API_TOKEN")) return callCloudflare(prompt);
+  if (Deno.env.get("ANTHROPIC_API_KEY")) return callClaude(prompt);
+  return Promise.reject(new Error("not-configured"));
 }
 
 Deno.serve(async (req: Request): Promise<Response> => {
@@ -177,14 +211,12 @@ Deno.serve(async (req: Request): Promise<Response> => {
   if (!prompt) return json({ error: "A description is required" }, 400);
   if (prompt.length > 2000) return json({ error: "Description is too long" }, 400);
 
-  // 2. not configured? bail BEFORE reserving a slot.
-  if (!Deno.env.get("ANTHROPIC_API_KEY")) return json({ error: "not-configured" }, 501);
+  // 2. not configured? bail BEFORE reserving.
+  if (!providerConfigured()) return json({ error: "not-configured" }, 501);
 
-  // 3. reserve atomically (DM-ship + caps) — no paid call yet.
+  // 3. reserve atomically (DM-ship + caps) — no model call yet.
   const { data: reserveId, error: reserveErr } = await userClient.rpc("ai_reserve_text", {
-    p_campaign: campaignId,
-    p_kind: "monster",
-    p_prompt: prompt,
+    p_campaign: campaignId, p_kind: "monster", p_prompt: prompt,
   });
   if (reserveErr) {
     const msg = reserveErr.message || "Could not reserve a generation slot";
@@ -193,13 +225,10 @@ Deno.serve(async (req: Request): Promise<Response> => {
   const id = reserveId as string;
 
   try {
-    // 4. paid call
-    const monster = await callClaude(prompt);
-    // 5. finalize the reservation
-    const { error: doneErr } = await userClient.rpc("ai_complete_text", { p_id: id });
+    const monster = await generateMonster(prompt);           // 4. model call
+    const { error: doneErr } = await userClient.rpc("ai_complete_text", { p_id: id });  // 5. finalize
     if (doneErr) throw new Error(`Could not finalize reservation: ${doneErr.message}`);
-    // 6. hand the draft back for review/edit (the browser saves it)
-    return json({ ok: true, id, monster });
+    return json({ ok: true, id, monster });                  // 6. hand the draft back
   } catch (e) {
     try { await userClient.rpc("ai_fail_text", { p_id: id }); } catch (_) { /* ignore */ }
     const msg = e instanceof Error ? e.message : String(e);

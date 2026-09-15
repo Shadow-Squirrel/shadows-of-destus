@@ -38,18 +38,37 @@ npx supabase db push
 npx supabase functions deploy generate-monster
 ```
 
-## 3. Set your Anthropic key (the ONLY place it lives)
+## 3. Set the provider key (the ONLY place it lives)
 
-Create an API key at <https://console.anthropic.com/> → **API keys**, then:
+Pick ONE provider. The function auto-detects which you configured (Cloudflare
+wins if both are set). The browser never sees these keys. Until one is set, the
+page shows a calm "not set up" note and the hand-built form still works.
+
+**Option A — Cloudflare Workers AI (FREE, no credit card) — recommended**
+
+Free 10,000 neurons/day (plenty for a DM), runs Llama 3.3 70B. From
+<https://dash.cloudflare.com/> get your **Account ID** (right sidebar of any
+page) and create an **API token** (My Profile → API Tokens → Create → the
+"Workers AI" template, or a custom token with `Workers AI: Read` + `Run`). Then
+set two secrets in Supabase (dashboard → Project Settings → Edge Functions →
+Secrets, or CLI):
 
 ```
-npx supabase secrets set ANTHROPIC_API_KEY=sk-ant-...
-# optional — defaults to claude-opus-5. A cheaper model is fine for stat blocks:
-npx supabase secrets set ANTHROPIC_MODEL=claude-sonnet-5      # or claude-haiku-4-5
+CF_ACCOUNT_ID = your-account-id
+CF_API_TOKEN  = your-workers-ai-token
+# optional: CF_MODEL = @cf/meta/llama-3.3-70b-instruct-fp8-fast (the default)
 ```
 
-The browser never sees this key. Until it's set, the page shows a calm
-"not set up" note and the hand-built form still works.
+**Option B — Anthropic / Claude (paid, higher quality)**
+
+Create a key at <https://console.anthropic.com/> → **API keys** (needs a few $
+of prepaid credits; ~1–3¢ per monster). Set:
+
+```
+ANTHROPIC_API_KEY = sk-ant-...
+# optional — defaults to claude-opus-5; a cheaper model is fine for stat blocks:
+ANTHROPIC_MODEL   = claude-haiku-4-5
+```
 
 ---
 
