@@ -39,12 +39,13 @@ Build-on / feasibility:
   cap pattern** (per-DM + global monthly caps, prepaid provider ceiling).
 - Output is **editable**, not final — the DM tweaks before running it.
 
-### AI NPC generator
-DM types e.g. *"a nervous goblin merchant who secretly works for the thieves
-guild"* → Onyx produces a full NPC: name, race, occupation, personality,
-**secret**, **voice notes**, and an **inventory** (item + price). Then
-**"Generate Portrait"** (reuses FLUX) and **"Add NPC to campaign"** (drops it
-into the codex/roster). Editable. Same cost-caps as the image/text AI.
+### AI NPC generator — SHIPPED
+The 🎭 NPCs page (`npcs.html` / `js/pages/npcs.js`, DM-only `campaign_npcs`
+table, `npc` kind in `generate-homebrew`) drafts a full NPC (name, race, role,
+personality, **secret**, **voice**, **inventory**) + a **portrait** (FLUX), all
+editable. Secrets are DM-only (RLS); **Reveal to Codex** publishes the public
+details + portrait to the shared 🐉 Codex. Same cost-caps as image/text AI.
+See [`AI-NPCS.md`](./AI-NPCS.md).
 
 ### AI monster generator
 DM types e.g. *"a CR 7 undead crocodile boss"* → Onyx builds a statblock
@@ -61,12 +62,12 @@ token/HP/initiative shape as SRD monsters). Editable before use.
   already stores `{kind:"custom"}` races/subclasses/backgrounds + custom
   spells/feats/attacks/items — these editors are friendly front-ends onto that
   same shape, and the marketplace can sell the results.
-- **Smart combat (assist, don't automate)** — when the Fighter attacks
-  "Longsword → Goblin #3", Onyx rolls to-hit (🎲 19+8=27 HIT), rolls damage
-  (🎲 7+5=12), then **asks "Apply 12 damage? [Apply]"** — the DM stays in
-  control (confirm, not auto-apply). Reduces bookkeeping without taking over.
-  Build-on: the VTT already has attack targeting, dice, token HP, and the
-  cast→damage flow — this adds the guided "roll → confirm → apply" loop.
+- **Smart combat (assist, don't automate) — SHIPPED.** On the Battle map, using
+  a token's attack action and tapping a target now rolls to-hit, reads the
+  verdict vs the target's AC (crit on nat-20, miss on nat-1), rolls damage
+  (doubled on a crit), then **asks "Apply N to <target>? [Apply]"** — the DM
+  confirms; nothing is auto-applied. Reduces the target token's HP on Apply.
+  Pure frontend (`js/pages/vtt.js`), no deploy needed.
 
 ## Community & network effects
 - **LFG ("Find a Game")** — a game-discovery board: players browse open
