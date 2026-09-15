@@ -215,6 +215,55 @@ async function main() {
     board.setTargeting(false);
     hideHint();
   }
+
+  /* ── smart-combat helpers (assist, don't automate) ── */
+  // the natural d20 kept for a to-hit roll (20 = crit, 1 = fumble), or null
+  function keptD20(row) {
+    const d = (row?.dice || []).find((x) => x.sides === 20);
+    if (!d || !d.results?.length) return null;
+    return d.results.length === 2
+      ? (d.keep === "low" ? Math.min(...d.results) : Math.max(...d.results))
+      : d.results[0];
+  }
+  // a target token's AC, if we can derive it (SRD/homebrew monster or a PC sheet)
+  function acOfToken(tok) {
+    if (!tok) return null;
+    if (tok.kind === "monster") { const m = monsterByIndex(tok.monster_index); return m?.ac ?? null; }
+    if (tok.kind === "pc") { const c = charById(tok.character_id); const d = c ? drvOf(c) : null; return d?.ac ?? null; }
+    return null;
+  }
+  // The confirm-and-apply step: the DM sees the verdict + rolled damage and
+  // decides. Nothing is applied until they press Apply (never auto-applied).
+  function smartAttackResult({ attacker, action, target, verdict, targetAc, hitTotal, dmg, canApply }) {
+    const tname = target ? esc(target.label) : "the target";
+    const vpill = verdict === "crit" ? `<span class="pill gold">CRITICAL HIT</span>`
+      : verdict === "hit" ? `<span class="pill moss">HIT</span>`
+      : verdict === "miss" ? `<span class="pill ember">MISS</span>`
+      : `<span class="pill steel">you call it</span>`;
+    const acLine = targetAc != null ? ` vs AC ${targetAc}` : "";
+    const canDealDmg = dmg != null && target && target.hp_max != null && canApply;
+    const modal = openModal("🎯 Attack", `
+      <p style="margin:0 0 8px"><strong>${esc(attacker.label)}</strong> · ${esc(action.name)} → <strong>${tname}</strong></p>
+      <p style="margin:0 0 6px">To hit: <strong>${hitTotal ?? "?"}</strong>${acLine} — ${vpill}</p>
+      ${dmg != null
+        ? `<p style="margin:0 0 10px">Damage rolled: <strong>${dmg}</strong>${verdict === "miss" ? ` <span class="muted small">(missed — apply only if you rule it lands)</span>` : ""}</p>`
+        : `<p class="muted small" style="margin:0 0 10px">No damage dice on this action — apply by hand from the token if needed.</p>`}
+      <div class="actions">
+        ${canDealDmg ? `<button class="btn" id="sa-apply">⚔ Apply ${dmg} to ${tname}</button>` : ""}
+        <button class="btn-ghost" id="sa-skip">${canDealDmg ? "Skip" : "Close"}</button>
+      </div>
+      ${target && !canApply ? `<p class="muted small" style="margin:8px 0 0">Only the DM or ${tname}'s player can change its HP.</p>` : ""}`);
+    const skip = modal.el.querySelector("#sa-skip"); if (skip) skip.onclick = modal.close;
+    const apply = modal.el.querySelector("#sa-apply");
+    if (apply) apply.onclick = () => guard(async () => {
+      const before = target.hp_current ?? target.hp_max ?? 0;
+      const after = clampHp(target, before - dmg);
+      await updateToken(target, { hp_current: after });
+      modal.close();
+      toast(after <= 0 ? `${target.label} drops! (${before} → 0 HP)` : `${target.label}: ${before} → ${after} HP`);
+    });
+  }
+
   async function onPick(pt) {
     const t = targeting;
     targeting = null;
@@ -240,13 +289,36 @@ async function main() {
 
     if (t.kind === "attack") {
       const { token, action } = t;
+      const target = tokenAt(pt);
       const ranged = /ranged weapon attack|range \d/i.test(action.desc || "");
       fxCh.send({
         kind: "attack", from: centerOf(token), to: pt,
         ranged, dmgType: (action.damage?.[0]?.type || "").toLowerCase() || null,
       });
-      await rollD20(`${token.label} · ${action.name}`, action.attackBonus || 0, { crits: true });
-      openTokenMenu(token, null, { showActions: true }); // damage button is right there
+      // No token under the tap → old behaviour: roll to hit, hand off to the
+      // action menu for a manual damage roll.
+      if (!target) {
+        await rollD20(`${token.label} · ${action.name}`, action.attackBonus || 0, { crits: true });
+        openTokenMenu(token, null, { showActions: true });
+        return;
+      }
+      // Smart assist: to hit → verdict vs the target's AC → damage → confirm.
+      const hitRow = await rollD20(`${token.label} · ${action.name} → ${target.label}`, action.attackBonus || 0, { crits: true });
+      const nat = keptD20(hitRow);
+      const targetAc = acOfToken(target);
+      const verdict = nat === 20 ? "crit"
+        : nat === 1 ? "miss"
+        : (targetAc != null && hitRow.total != null) ? (hitRow.total >= targetAc ? "hit" : "miss")
+        : "unknown";
+      const dmgP = specFromDamages(action.damage);
+      let dmg = null;
+      if (dmgP && verdict !== "miss") {
+        const spec = verdict === "crit" ? [...dmgP.spec, ...dmgP.spec] : dmgP.spec;
+        const dRow = await rollSpec(`${token.label} · ${action.name} damage${verdict === "crit" ? " (crit)" : ""}`, spec, dmgP.modifier);
+        dmg = dRow.total;
+      }
+      const canApply = isDM || target.kind === "monster" || isMine(target);
+      smartAttackResult({ attacker: token, action, target, verdict, targetAc, hitTotal: hitRow.total, dmg, canApply });
       return;
     }
 

@@ -104,9 +104,51 @@ const ITEM_JSON_INSTRUCTION =
   "name, type, rarity, attunement (bool), attunement_note, props, charges, weight, cost, desc. " +
   "Use \"\" for any text field that doesn't apply.";
 
+// ── NPC schema (a DM's ready-to-play non-player character) ──
+const NPC_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    name: { type: "string" },
+    race: { type: "string", description: "e.g. 'half-orc', 'tiefling', 'human'" },
+    role: { type: "string", description: "occupation / place in the world, e.g. 'dockside fence', 'temple acolyte'" },
+    alignment: { type: "string", description: "e.g. 'Neutral Evil' (or '')" },
+    appearance: { type: "string", description: "one vivid sentence of physical appearance — used as the portrait prompt" },
+    personality: { type: "string", description: "manner + motive, a sentence or two" },
+    secret: { type: "string", description: "a real secret the DM can spring — for the DM's eyes only" },
+    voice: { type: "string", description: "how to play their voice / mannerism at the table" },
+    inventory: {
+      type: "array",
+      description: "a few notable things they carry or sell, with a rough price",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          item: { type: "string" },
+          price: { type: "string", description: "rough value, e.g. '25 gp' (or '')" },
+        },
+        required: ["item", "price"],
+      },
+    },
+  },
+  required: ["name", "race", "role", "alignment", "appearance", "personality", "secret", "voice", "inventory"],
+};
+const NPC_SYSTEM = [
+  "You are an expert Dungeons & Dragons 5e Dungeon Master and NPC designer.",
+  "Given a short description, create ONE vivid, ready-to-play NPC. Give them a real SECRET the DM can spring,",
+  "a distinctive VOICE/mannerism to play them by, a one-sentence physical APPEARANCE (this doubles as a portrait",
+  "prompt), and a small INVENTORY of a few notable things they carry or sell with rough prices. Keep them grounded",
+  "in the fiction requested. Use '' for any text field that doesn't apply and [] for an empty inventory.",
+].join(" ");
+const NPC_JSON_INSTRUCTION =
+  " Respond with ONLY a single JSON object — no prose, no markdown fences — with keys: " +
+  "name, race, role, alignment, appearance, personality, secret, voice, and inventory " +
+  "(an array of {item, price}). Use \"\" for text that doesn't apply and [] for no inventory.";
+
 const SCHEMAS: Record<string, { schema: unknown; system: string; jsonInstruction: string; noun: string }> = {
   spell: { schema: SPELL_SCHEMA, system: SPELL_SYSTEM, jsonInstruction: SPELL_JSON_INSTRUCTION, noun: "spell" },
   item: { schema: ITEM_SCHEMA, system: ITEM_SYSTEM, jsonInstruction: ITEM_JSON_INSTRUCTION, noun: "item" },
+  npc: { schema: NPC_SCHEMA, system: NPC_SYSTEM, jsonInstruction: NPC_JSON_INSTRUCTION, noun: "NPC" },
 };
 
 function statusForDbError(msg: string): number {

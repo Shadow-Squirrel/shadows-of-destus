@@ -2,7 +2,7 @@
 // person, creature, faction, or place they've met, and anyone
 // can pin extra intel notes onto an entry.
 import { boot, esc, md, guard, fmtDate, toast } from "../shell.js";
-import { codex, images } from "../db.js";
+import { codex, images, ai } from "../db.js";
 
 const KINDS = [
   ["person", "🧝", "People"],
@@ -34,6 +34,8 @@ async function main() {
   async function render() {
     const [entries, allNotes] = await Promise.all([codex.list(), codex.notes()]);
     const urls = await images.urls(entries.map((e) => e.image_path));
+    // AI portraits (e.g. from a revealed NPC) live in the private 'ai-art' bucket
+    const artUrls = await ai.artUrls(entries.map((e) => e.art_path).filter(Boolean)).catch(() => ({}));
     const notesFor = {};
     allNotes.forEach((n) => (notesFor[n.entry_id] ??= []).push(n));
 
@@ -61,7 +63,7 @@ async function main() {
     const grid = root.querySelector("#grid");
     const shown = entries.filter((e) => filter === "all" || e.kind === filter);
     if (!shown.length) grid.innerHTML = `<div class="empty" style="grid-column:1/-1">Nothing recorded here yet. Met anyone interesting lately?</div>`;
-    shown.forEach((e) => grid.appendChild(entryCard(e, notesFor[e.id] || [], urls)));
+    shown.forEach((e) => grid.appendChild(entryCard(e, notesFor[e.id] || [], urls, artUrls)));
 
     root.querySelector("#new-e").onclick = (ev) => {
       root.querySelector("#new-slot").replaceChildren(entryForm({}));
@@ -69,9 +71,9 @@ async function main() {
     };
   }
 
-  function entryCard(e, notes, urls) {
+  function entryCard(e, notes, urls, artUrls) {
     const mine = e.author_email?.toLowerCase() === ctx.me.email;
-    const portrait = e.image_path && urls[e.image_path];
+    const portrait = (e.art_path && artUrls?.[e.art_path]) || (e.image_path && urls[e.image_path]);
     const card = document.createElement("div");
     card.className = "card entry";
     card.innerHTML = `

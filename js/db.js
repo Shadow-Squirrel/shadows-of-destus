@@ -518,8 +518,12 @@ export const codex = {
   list: async () => (sb ? q(scope(sb.from("codex_entries").select("*")).order("created_at", { ascending: false })) : sortNew(DEMO.codex.filter(inCampaign))),
   notes: async () => (sb ? q(scope(sb.from("codex_notes").select("*")).order("created_at")) : [...DEMO.codexNotes]),
   add: async (row) => {
-    if (!sb) return DEMO.codex.push({ ...row, id: uid(), campaign_id: campaignId, author_email: "dm@example.com", created_at: new Date().toISOString() });
-    await q(sb.from("codex_entries").insert(stamp(row)));
+    if (!sb) {
+      const e = { ...row, id: uid(), campaign_id: campaignId, author_email: "dm@example.com", created_at: new Date().toISOString() };
+      DEMO.codex.push(e);
+      return e;
+    }
+    return q(sb.from("codex_entries").insert(stamp(row)).select("id").single());
   },
   update: async (id, fields) => {
     if (!sb) return Object.assign(DEMO.codex.find((x) => x.id === id), fields);
@@ -1264,6 +1268,39 @@ export const adventures = {
   remove: async (id) => {
     if (!sb) return (DEMO.adventures = (DEMO.adventures || []).filter((m) => m.id !== id));
     await q(sb.from("adventures").delete().eq("id", id));
+  },
+};
+
+/* ═══ NPCs (the DM's private cast, per campaign) ═══
+   DM-ONLY: only the campaign DM can read or write these, because they
+   carry secrets the players must not see (enforced by RLS, not the
+   browser). `data` holds the NPC blob (race, role, personality, secret,
+   voice, inventory — see js/pages/npcs.js); an optional AI portrait
+   lives in the 'ai-art' bucket (view it with ai.artUrls). "Reveal" makes
+   a public codex entry and stores its id in codex_entry_id. */
+export const npcs = {
+  list: async () =>
+    sb
+      ? q(scope(sb.from("campaign_npcs").select("*")).order("created_at", { ascending: false }))
+      : (DEMO.npcs || []).filter(inCampaign),
+  // row: {id?, name, data, art_path?, codex_entry_id?}
+  save: async (row) => {
+    const fields = {
+      name: row.name || "New NPC", data: row.data || {},
+      art_path: row.art_path ?? null, codex_entry_id: row.codex_entry_id ?? null,
+    };
+    if (!sb) {
+      DEMO.npcs ||= [];
+      if (row.id) return Object.assign(DEMO.npcs.find((m) => m.id === row.id) || {}, fields);
+      const m = { ...fields, id: uid(), campaign_id: campaignId, created_at: new Date().toISOString() };
+      DEMO.npcs.unshift(m); return m;
+    }
+    if (row.id) { await q(sb.from("campaign_npcs").update(fields).eq("id", row.id)); return { id: row.id }; }
+    return q(sb.from("campaign_npcs").insert(stamp(fields)).select("*").single());
+  },
+  remove: async (id) => {
+    if (!sb) return (DEMO.npcs = (DEMO.npcs || []).filter((m) => m.id !== id));
+    await q(sb.from("campaign_npcs").delete().eq("id", id));
   },
 };
 
