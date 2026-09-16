@@ -13,7 +13,9 @@ import { profile, billing } from "../db.js";
 
 const MAX_AVATAR = 5 * 1024 * 1024; // 5 MB — matches the bucket's limit
 
-const ctx = await boot("profile.html", "Profile");
+// allowNoCampaign: a brand-new subscriber (no campaign yet) must still reach
+// their profile — it's where billing lives and where the Stripe portal returns.
+const ctx = await boot("profile.html", "Profile", { allowNoCampaign: true });
 if (ctx) main();
 
 async function main() {

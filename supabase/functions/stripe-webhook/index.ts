@@ -182,7 +182,14 @@ async function handle(event: Json, admin: Admin, key: string): Promise<string> {
       const email = await emailForSubscription(admin, obj);
       if (!email) return "ignored (no matching account)";
       const subId = typeof obj.id === "string" ? obj.id : null;
-      const status = event.type === "customer.subscription.deleted" ? "canceled" : String(obj.status || "incomplete");
+      // Stripe doesn't guarantee order: a late or retried "active" update must
+      // not undo a later cancellation. Read the LIVE object and trust it over
+      // the event payload; fall back to the payload only if Stripe is unreachable.
+      const live = subId && event.type !== "customer.subscription.deleted"
+        ? await stripeGet(`/subscriptions/${subId}`, key).catch(() => null)
+        : null;
+      const src = live ?? obj;
+      const status = event.type === "customer.subscription.deleted" ? "canceled" : String(src.status || "incomplete");
       // A dashboard "cancel and replace" ends an OLD subscription while a
       // NEW one is already live for the same account — don't let the old
       // one's ending revoke the seat the new one just paid for.
@@ -196,11 +203,11 @@ async function handle(event: Json, admin: Admin, key: string): Promise<string> {
       }
       await saveSub(admin, {
         email,
-        stripe_customer_id: idOf(obj.customer),
+        stripe_customer_id: idOf(src.customer) ?? idOf(obj.customer),
         stripe_subscription_id: subId,
         status,
-        current_period_end: periodEnd(obj),
-        cancel_at_period_end: !!obj.cancel_at_period_end,
+        current_period_end: periodEnd(src),
+        cancel_at_period_end: !!src.cancel_at_period_end,
       });
       return `${status} → seat ${await setSeat(admin, email, status)}`;
     }

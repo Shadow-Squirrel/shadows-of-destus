@@ -24,7 +24,7 @@
 /* a warm gold pool of light behind the headline (z-index -1 sits above the body grain) */
 .hero::before {
   content: ""; position: absolute; z-index: -1; pointer-events: none;
-  inset: -60px -40px -20px;
+  inset: -60px 0 -20px;   /* never wider than main, or phones get a sideways scroll */
   background:
     radial-gradient(560px 320px at 28% 40%, rgba(212,165,49,.16), transparent 70%),
     radial-gradient(420px 420px at 82% 50%, rgba(155,142,201,.10), transparent 70%);
