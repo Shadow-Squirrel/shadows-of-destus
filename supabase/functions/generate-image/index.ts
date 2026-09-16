@@ -135,10 +135,36 @@ function providerConfigured(): boolean {
   return !!Deno.env.get("FAL_KEY");
 }
 
+// ── house style, enforced HERE so every caller gets it ───────
+// Planners and people describe the SCENE; the viewpoint and the art style
+// are ours to fix. A map must read as a tabletop battle map seen from
+// directly above (FLUX otherwise happily paints a first-person road), and
+// both kinds should look like adventurous, painterly fantasy art — not a
+// cartoon. FLUX.1 [schnell] has no negative prompt, so the "no …" clauses
+// are phrased inside the positive prompt, which it does respect.
+function styled(prompt: string, kind: Kind): string {
+  const scene = prompt.replace(/\s+/g, " ").trim();
+  if (kind === "map") {
+    return (
+      "Top-down tabletop RPG battle map, strictly overhead bird's-eye view looking straight down at the ground " +
+      "(orthographic, flat map projection, no horizon, no sky, no perspective, not a first-person or eye-level view). " +
+      `The terrain shown: ${scene}. ` +
+      "Painterly, richly detailed adventurous high-fantasy illustration — dramatic lighting, textured ground, " +
+      "realistic proportions, moody atmosphere — not a cartoon, not flat vector art, no text, no labels, " +
+      "no grid lines, no creatures or characters, no user-interface elements."
+    );
+  }
+  return (
+    `${scene}. Painterly adventurous high-fantasy character portrait, dramatic lighting, detailed and lifelike, ` +
+    "expressive face — not a cartoon, not anime, no text, no watermark, no frame."
+  );
+}
+
 function generate(prompt: string, kind: Kind): Promise<string> {
   const p = (Deno.env.get("IMAGE_PROVIDER") || "fal").toLowerCase();
-  if (p === "replicate") return generateReplicate(prompt, kind);
-  if (p === "fal") return generateFal(prompt, kind);
+  const full = styled(prompt, kind);
+  if (p === "replicate") return generateReplicate(full, kind);
+  if (p === "fal") return generateFal(full, kind);
   throw new Error(`Unknown IMAGE_PROVIDER "${p}" (expected 'fal' or 'replicate')`);
 }
 
