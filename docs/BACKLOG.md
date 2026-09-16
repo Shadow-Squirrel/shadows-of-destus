@@ -97,9 +97,15 @@ token/HP/initiative shape as SRD monsters). Editable before use.
   tooling, and a removal path. Ties into DMCA above and to storage RLS.
 
 ## Payments & commerce
-- **Secure payment processing** — the deferred Stripe phase: Stripe Checkout +
-  Customer Portal, no card data stored (PCI SAQ A). Subscription unlocks DM
-  accounts (adds the buyer's email to `campaign_creators`).
+- **Secure payment processing — SHIPPED (Stripe; needs the owner's one-time
+  setup).** Stripe Checkout + Customer Portal, no card data stored (PCI SAQ A).
+  The **Dungeon Lord** subscription is the buyer's email in `campaign_creators`
+  (`source = 'stripe'`), granted/revoked ONLY by the signed `stripe-webhook`
+  Edge Function; `create-checkout-session` / `billing-portal` mint the hosted
+  Stripe URLs; the `billing_status()` RPC feeds the pricing + profile pages.
+  Migration `20260925120000_billing.sql`; proofs in `tools/run-billing-tests.sh`.
+  Until the Stripe secrets are set the pricing page shows "coming soon". See
+  [`BILLING.md`](./BILLING.md).
 - **Marketplace infrastructure** — a storefront where **creators sell their own
   content** and buyers get it in-app. Details from the owner:
   - **What creators sell:** custom **classes and races** (homebrew), **theme

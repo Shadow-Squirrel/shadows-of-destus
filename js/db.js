@@ -1494,3 +1494,78 @@ export const profile = {
     return () => { try { data.subscription.unsubscribe(); } catch {} };
   },
 };
+
+/* ═══ Billing — the "Dungeon Lord" subscription (Stripe) ═══
+   The browser never talks to Stripe. billing_status() is a DB RPC that
+   reports the caller's tier + their own subscriptions row; checkout and
+   the customer portal are Edge Functions (create-checkout-session,
+   billing-portal) that mint a Stripe-hosted URL we simply redirect to.
+   The webhook that flips the tier is server-to-server (never called here).
+
+   "Not set up yet" is a first-class state, same as ai.generate: status()
+   returns null when the billing migration isn't applied (or in demo), and
+   checkout()/portal() throw .code==='not-configured' when the function
+   isn't deployed or its Stripe secrets aren't set — so pages can show a
+   calm "coming soon" instead of a broken button. See docs/BILLING.md. */
+const billingNotConfigured = () => Object.assign(new Error("Billing isn't set up yet"), { code: "not-configured" });
+
+// Invoke a billing function (body {}) and return the URL it minted. `known`
+// maps the function's own error codes ({error:"already-subscribed"} on a
+// 409, {error:"no-subscription"} on a 404, …) to a friendly message; the
+// thrown Error carries the code so pages can branch without string-matching.
+async function billingInvoke(fn, known = {}) {
+  if (!sb) throw new Error("Billing needs the live database — it isn't available in demo mode.");
+  // own-property check so a stray code like "constructor" can't hit Object.prototype
+  const coded = (code) => (typeof code === "string" && Object.hasOwn(known, code)
+    ? Object.assign(new Error(known[code]), { code }) : null);
+  const { data, error } = await sb.functions.invoke(fn, { body: {} });
+  if (error) {
+    // supabase-js wraps non-2xx as FunctionsHttpError with the Response in
+    // error.context — read the JSON body for the code / a clean message.
+    let msg = error.message || "Billing request failed";
+    try {
+      const b = await error.context.json();
+      if (b?.error === "not-configured") throw billingNotConfigured();
+      if (coded(b?.error)) throw coded(b.error);
+      if (b?.error) msg = b.error;
+      // a 404 with no {error} of ours is the gateway: function not deployed
+      else if (error.context.status === 404) throw billingNotConfigured();
+      else if (b?.message) msg = b.message;
+    } catch (inner) {
+      if (inner?.code) throw inner;
+      // function not deployed / unreachable → treat as "not set up yet"
+      if (/Failed to send|Function not found|404|not found/i.test(msg)) throw billingNotConfigured();
+    }
+    throw new Error(msg);
+  }
+  if (data?.error === "not-configured") throw billingNotConfigured();
+  if (coded(data?.error)) throw coded(data.error);
+  if (data?.error) throw new Error(data.error);
+  if (typeof data?.url !== "string" || !data.url) throw new Error("Billing didn't return a link to continue");
+  return data.url;
+}
+
+export const billing = {
+  // The signed-in user's billing picture from the database:
+  //   { tier:'dm'|'free', is_creator, creator_source:'manual'|'stripe'|null,
+  //     subscription: null | { status, current_period_end, cancel_at_period_end, has_customer } }
+  // …or null if the billing migration/RPC isn't present yet (or demo mode).
+  status: async () => {
+    if (!sb) return null;
+    try { return await q(sb.rpc("billing_status")); }
+    catch (e) {
+      if (/does not exist|Could not find|schema cache|function/i.test(e?.message || "")) return null;
+      throw e;
+    }
+  },
+  // Start a subscription: returns the Stripe Checkout URL to send the
+  // browser to. Throws .code 'not-configured' | 'already-subscribed'.
+  checkout: () => billingInvoke("create-checkout-session", {
+    "already-subscribed": "You already have a subscription — manage it from your profile.",
+  }),
+  // Manage an existing subscription (cancel, card, invoices): returns the
+  // Stripe Customer Portal URL. Throws .code 'not-configured' | 'no-subscription'.
+  portal: () => billingInvoke("billing-portal", {
+    "no-subscription": "There's no subscription on this account to manage.",
+  }),
+};

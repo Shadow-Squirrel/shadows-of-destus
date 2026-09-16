@@ -3,7 +3,7 @@
 import { boot, esc, md, guard, fmtDate, toast } from "../shell.js";
 import { sections, notes } from "../db.js";
 
-const ctx = await boot("index.html", "Home");
+const ctx = await boot("hub.html", "Home");
 if (ctx) main();
 
 async function main() {
