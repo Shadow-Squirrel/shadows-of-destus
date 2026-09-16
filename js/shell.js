@@ -278,6 +278,17 @@ function profileLink() {
   return a;
 }
 
+// Back to the public front page (landing + plans) — the app nav's Home tab
+// is the campaign hub, so members need this to reach the site itself.
+function siteLink() {
+  const a = document.createElement("a");
+  a.href = "./index.html";
+  a.className = "who-profile";
+  a.title = "The site's front page";
+  a.textContent = "🏰 Site";
+  return a;
+}
+
 /* ── boot: call this first on every page ── */
 export async function boot(pageFile, pageTitle) {
   document.title = `${pageTitle} · ${CONFIG.APP_NAME}`;
@@ -291,7 +302,7 @@ export async function boot(pageFile, pageTitle) {
     const currentId = chooseCampaign(list);
     setCampaign(currentId);
     const current = list.find((c) => c.id === currentId);
-    renderHeader(pageFile, [pill("demo mode", "mystic"), campaignSwitcher(list, currentId), profileLink()], current?.tagline);
+    renderHeader(pageFile, [pill("demo mode", "mystic"), campaignSwitcher(list, currentId), siteLink(), profileLink()], current?.tagline);
     banner(`🧪 <strong>Demo mode</strong> — sample data, and edits vanish on refresh.
       You're previewing as the DM so every control is visible.
       Connect your free database to make it real (README, step 2).`);
@@ -319,6 +330,7 @@ export async function boot(pageFile, pageTitle) {
     renderHeader(pageFile, [
       document.createTextNode(meL.display_name || session.email),
       pill(meL.role === "dm" ? "DM" : "player", meL.role === "dm" ? "gold" : "steel"),
+      siteLink(),
       profileLink(),
       signOutBtn(),
     ], CONFIG.TAGLINE);
@@ -333,7 +345,7 @@ export async function boot(pageFile, pageTitle) {
   }
 
   if (!myCampaigns.length) {
-    renderHeader(pageFile, [document.createTextNode(session.email), signOutBtn()]);
+    renderHeader(pageFile, [document.createTextNode(session.email), siteLink(), signOutBtn()]);
     await renderNoCampaigns(main, session.email);
     return null;
   }
@@ -350,6 +362,7 @@ export async function boot(pageFile, pageTitle) {
     campaignSwitcher(myCampaigns, currentId),
     document.createTextNode(me.display_name || session.email),
     pill(me.role === "dm" ? "DM" : "player", me.role === "dm" ? "gold" : "steel"),
+    siteLink(),
     profileLink(),
     signOutBtn(),
   ], current?.tagline);
