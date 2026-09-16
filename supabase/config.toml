@@ -392,6 +392,23 @@ deno_version = 2
 enabled = true
 verify_jwt = true
 
+# Billing (Stripe). The two browser-facing functions do their own auth
+# (getUser) but, like generate-image, also require a valid JWT at the edge.
+[functions.create-checkout-session]
+enabled = true
+verify_jwt = true
+
+[functions.billing-portal]
+enabled = true
+verify_jwt = true
+
+# Stripe signs its own requests (Stripe-Signature, verified inside the
+# function); a webhook call carries no Supabase JWT, so the edge must not
+# demand one. Deploy with: supabase functions deploy stripe-webhook --no-verify-jwt
+[functions.stripe-webhook]
+enabled = true
+verify_jwt = false
+
 [analytics]
 enabled = true
 port = 54327

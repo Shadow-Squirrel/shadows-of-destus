@@ -1,0 +1,159 @@
+/* ═══════════════════════════════════════════════════════════
+   Landing — the public front door (index.html).
+   Extends style.css; uses the same :root tokens. Everything
+   here layers ON TOP of the body gradients + grain.
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── section rhythm ── */
+.land-sec { margin: 56px 0 0; }
+.land-sec > h2.section { font-size: 26px; text-align: center; margin-bottom: 8px; }
+.land-sec > .lead { text-align: center; color: var(--muted); max-width: 62ch; margin: 0 auto 26px; font-size: 17px; }
+.land-eyebrow {
+  display: inline-block; font-family: var(--font-display); font-size: 12.5px; font-weight: 700;
+  letter-spacing: .16em; text-transform: uppercase; color: var(--gold);
+  border: 1px solid var(--gold-soft); border-radius: 999px; padding: 4px 13px;
+  background: rgba(212,165,49,.07); box-shadow: var(--hairline);
+}
+
+/* ── hero ── */
+.hero {
+  position: relative; isolation: isolate;
+  display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); align-items: center; gap: 32px;
+  padding: 44px 0 30px;
+}
+/* a warm gold pool of light behind the headline (z-index -1 sits above the body grain) */
+.hero::before {
+  content: ""; position: absolute; z-index: -1; pointer-events: none;
+  inset: -60px -40px -20px;
+  background:
+    radial-gradient(560px 320px at 28% 40%, rgba(212,165,49,.16), transparent 70%),
+    radial-gradient(420px 420px at 82% 50%, rgba(155,142,201,.10), transparent 70%);
+}
+.hero h1 {
+  font-family: var(--font-display); font-weight: 800; font-size: clamp(34px, 5vw, 56px);
+  line-height: 1.08; letter-spacing: .02em; margin: 14px 0 16px;
+  background: linear-gradient(180deg, #f8e4a8, var(--gold) 58%, #b78a24);
+  -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; color: var(--gold);
+  filter: drop-shadow(0 2px 8px rgba(0,0,0,.5));
+}
+.hero .sub { font-size: 20px; line-height: 1.5; color: var(--ink); max-width: 34ch; margin: 0 0 26px; }
+.hero .sub em { color: var(--gold-bright); font-style: italic; }
+.hero .cta { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
+.hero .trust { margin: 18px 0 0; color: var(--muted); font-size: 14px; font-style: italic; }
+.hero .trust b { color: var(--gold); font-weight: 600; font-style: normal; }
+
+/* the d20 — inline SVG stroked in gold, floating in a slow-spinning rune ring */
+.hero-art { display: grid; place-items: center; }
+.hero-d20 {
+  width: min(300px, 78%); overflow: visible;
+  fill: none; stroke: var(--gold); stroke-width: 1.1; stroke-linejoin: round; stroke-linecap: round;
+  filter: drop-shadow(0 0 16px rgba(212,165,49,.35)) drop-shadow(0 12px 22px rgba(0,0,0,.5));
+  animation: d20-float 6s ease-in-out infinite;
+}
+.hero-d20 .face { fill: rgba(212,165,49,.12); stroke: var(--gold-bright); }
+.hero-d20 .shell { fill: rgba(30,24,17,.7); }
+.hero-d20 .ring {
+  stroke: var(--gold-soft); stroke-width: .9; stroke-dasharray: 1.5 4.5; opacity: .8;
+  transform-box: fill-box; transform-origin: center; animation: ring-spin 60s linear infinite;
+}
+.hero-d20 .ring2 { stroke: var(--mystic); stroke-width: .6; stroke-dasharray: 6 9; opacity: .45; transform-box: fill-box; transform-origin: center; animation: ring-spin 90s linear infinite reverse; }
+.hero-d20 text { fill: var(--gold-bright); stroke: none; font-family: var(--font-display); font-weight: 800; font-size: 15px; text-anchor: middle; }
+
+@keyframes d20-float { 0%, 100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-10px) rotate(2deg); } }
+@keyframes ring-spin { to { transform: rotate(360deg); } }
+@keyframes rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+
+/* staggered entrance: each hero child rises in turn */
+.hero .rise { animation: rise .7s var(--ease) both; }
+.hero .rise:nth-child(2) { animation-delay: .08s; }
+.hero .rise:nth-child(3) { animation-delay: .16s; }
+.hero .rise:nth-child(4) { animation-delay: .24s; }
+.hero .rise:nth-child(5) { animation-delay: .32s; }
+.hero .hero-art.rise { animation-delay: .2s; }   /* same specificity as the nth-child rules, later → wins */
+
+/* ── feature grid ── */
+.feat-grid .card:hover { transform: translateY(-3px); border-color: var(--gold-soft); box-shadow: var(--sh-3), var(--hairline); }
+.feat-glyph {
+  width: 46px; height: 46px; display: grid; place-items: center; font-size: 24px; line-height: 1;
+  border-radius: 12px; border: 1px solid var(--border); margin-bottom: 12px;
+  background: linear-gradient(180deg, rgba(212,165,49,.14), rgba(212,165,49,.03));
+  box-shadow: var(--hairline), var(--sh-1);
+}
+.feat-title { font-family: var(--font-display); font-size: 17px; font-weight: 700; letter-spacing: .03em; color: var(--gold); margin: 0 0 6px; }
+.feat-grid p { margin: 0; color: var(--muted); font-size: 15.5px; line-height: 1.55; }
+
+/* ── how it works ── */
+.steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; counter-reset: step; }
+.step { text-align: center; padding: 24px 20px; }
+.step-num {
+  width: 2.3em; height: 2.3em; margin: 0 auto 12px; display: grid; place-items: center;
+  border-radius: 50%; border: 1px solid var(--gold-soft); color: var(--gold);
+  font-family: var(--font-display); font-weight: 800; font-size: 1.05rem; background: rgba(212,165,49,.08);
+  box-shadow: var(--glow-gold), var(--hairline);
+}
+.step h3 { font-family: var(--font-display); font-size: 17px; color: var(--ink); letter-spacing: .03em; margin: 0 0 6px; }
+.step p { margin: 0; color: var(--muted); font-size: 15.5px; }
+
+/* ── founder ── */
+.founder { border-left: 4px solid var(--gold); padding: 24px 28px; max-width: 820px; margin: 0 auto; }
+.founder .quote {
+  font-style: italic; font-size: 21px; line-height: 1.4; color: var(--gold-bright); margin: 0 0 14px;
+  text-shadow: 0 0 18px rgba(212,165,49,.16);
+}
+.founder .quote::before { content: "“"; color: var(--gold-soft); margin-right: 2px; }
+.founder .quote::after { content: "”"; color: var(--gold-soft); margin-left: 2px; }
+.founder p { margin: 10px 0; }
+.founder .sig { color: var(--muted); font-size: 14px; font-style: italic; margin-top: 14px; }
+
+/* ── tiers ── */
+.tiers { align-items: stretch; max-width: 860px; margin: 0 auto; }
+.tier { display: flex; flex-direction: column; padding: 24px 24px 22px; }
+.tier-eyebrow { font-family: var(--font-display); font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); margin: 0 0 8px; min-height: 1.2em; }
+.tier.hi { border-color: var(--gold-soft); box-shadow: var(--sh-3), var(--glow-gold), var(--hairline); background: linear-gradient(180deg, rgba(212,165,49,.10), var(--panel) 48%); }
+.tier.hi .tier-eyebrow { color: var(--gold); }
+.tier h3 { font-family: var(--font-display); font-size: 22px; color: var(--gold); margin: 0; letter-spacing: .04em; }
+.tier .price { font-family: var(--font-display); font-size: 26px; font-weight: 800; color: var(--ink); margin: 6px 0 2px; }
+.tier .price small { font-size: 14px; font-weight: 600; color: var(--muted); letter-spacing: .04em; }
+.tier .blurb { color: var(--muted); font-size: 14.5px; font-style: italic; margin: 0 0 12px; }
+.tier ul { list-style: none; padding: 0; margin: 0 0 20px; flex: 1; }
+.tier li { padding: 6px 0 6px 26px; position: relative; border-top: 1px solid var(--border-soft); font-size: 15.5px; }
+.tier li::before { content: "✦"; position: absolute; left: 6px; color: var(--gold-soft); font-size: 13px; }
+.tier.hi li::before { color: var(--gold); }
+.tier .actions { display: flex; }
+
+/* ── closing band ── */
+.cta-band {
+  position: relative; text-align: center; margin: 60px 0 0; padding: 40px 24px 36px;
+  border: 1px solid var(--border); border-radius: var(--radius);
+  background:
+    radial-gradient(70% 120% at 50% 0%, rgba(212,165,49,.14), transparent 70%),
+    linear-gradient(180deg, var(--panel-hi), var(--panel));
+  box-shadow: var(--sh-2), var(--hairline);
+}
+.cta-band h2 { font-family: var(--font-display); color: var(--gold); font-size: clamp(22px, 3.4vw, 32px); letter-spacing: .04em; margin: 0 0 8px; }
+.cta-band p { color: var(--muted); margin: 0 0 22px; }
+.srd-line { text-align: center; color: var(--faint); font-size: 13.5px; margin: 24px 0 0; }
+.srd-line a { color: var(--gold); }
+
+/* ── motion & small screens ── */
+@media (prefers-reduced-motion: reduce) {
+  .hero .rise, .hero-d20, .hero-d20 .ring, .hero-d20 .ring2 { animation: none; opacity: 1; transform: none; }
+  .feat-grid .card:hover { transform: none; }
+}
+@media (max-width: 760px) {
+  .hero { grid-template-columns: 1fr; gap: 12px; padding-top: 28px; }
+  .hero-art { order: 2; }
+  .hero-d20 { width: 170px; }
+  .steps { grid-template-columns: 1fr; }
+}
+@media (max-width: 640px) {
+  .hero h1 { font-size: 32px; }
+  .hero .sub { font-size: 18px; }
+  .hero .cta .btn, .hero .cta .btn-ghost { width: 100%; text-align: center; }
+  .land-sec { margin-top: 44px; }
+  .land-sec > h2.section { font-size: 22px; }
+  .feat-grid, .tiers { grid-template-columns: 1fr; }
+  .founder { padding: 20px 18px; }
+  .founder .quote { font-size: 18px; }
+  .cta-band { padding: 30px 18px 28px; }
+}

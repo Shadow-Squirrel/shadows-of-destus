@@ -222,6 +222,15 @@ function renderGate(main) {
       document.getElementById("g-msg").textContent = "…";
       if (modeUp) {
         await auth.signUp(email, pass);
+        // With "Confirm email" ON there's no session yet — say so instead
+        // of reloading to a blank gate.
+        let s = null;
+        try { s = await auth.session(); } catch { s = null; }
+        if (!s) {
+          document.getElementById("g-msg").textContent = "Check your email to confirm your account, then sign in.";
+          setTab(false);
+          return;
+        }
         location.reload();
       } else {
         await auth.signIn(email, pass);

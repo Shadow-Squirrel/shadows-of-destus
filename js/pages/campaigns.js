@@ -3,6 +3,7 @@
 // Every campaign is walled off from every other (the database enforces it);
 // this page is just the controls.
 import { boot, esc, guard, toast, fmtDate } from "../shell.js";
+import { CONFIG } from "../config.js";
 import { campaigns, members, invites } from "../db.js";
 
 const CAMP_KEY = "sod-campaign";
@@ -26,10 +27,20 @@ async function main() {
     }
     const mine = ctx.campaigns || (await campaigns.mine(ctx.me.email));
     const currentId = ctx.campaign?.id;
+    // Only accounts allowed to create campaigns (Dungeon Lords) get the
+    // button — anyone else would just hit the database's "not allowed"
+    // error, so point them at the plans instead. canCreate() stays
+    // permissive when the gating RPC isn't deployed yet (pre-migration).
+    let canCreate = false;
+    try { canCreate = await campaigns.canCreate(); } catch (e) { console.error(e); canCreate = false; }
+    const dmName = CONFIG.TIERS?.DM?.name || "Dungeon Lord";
+    const dmIcon = CONFIG.TIERS?.DM?.icon || "🔥";
     root.innerHTML = `
       <div class="row" style="justify-content:space-between; margin-bottom:14px">
         <h2 class="section" style="margin:0">Your Campaigns</h2>
-        <button class="btn" id="new-camp">＋ New campaign</button>
+        ${canCreate
+          ? `<button class="btn" id="new-camp">＋ New campaign</button>`
+          : `<a class="btn" href="./pricing.html">${esc(dmIcon)} Become a ${esc(dmName)} to run a table</a>`}
       </div>
       <p class="muted small" style="margin-top:-6px">Each campaign is its own private world — its maps, quests,
       notes, battle maps and dice are visible only to the people you invite to it. Players you add to one
@@ -87,7 +98,8 @@ async function main() {
       grid.appendChild(card);
     });
 
-    root.querySelector("#new-camp").onclick = () => {
+    const newBtn = root.querySelector("#new-camp");
+    if (newBtn) newBtn.onclick = () => {
       const slot = root.querySelector("#new-slot");
       slot.innerHTML = `
         <div class="card">

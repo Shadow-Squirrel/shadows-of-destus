@@ -7,8 +7,9 @@
 // The DATABASE is the security here — RLS lets you read/write only your own
 // profile, save_profile upserts just your row, and Supabase Auth owns the
 // password. This file is only the browser wiring around profile.* in db.js.
-import { boot, esc, guard, toast } from "../shell.js";
-import { profile } from "../db.js";
+import { boot, esc, guard, toast, fmtDate } from "../shell.js";
+import { CONFIG } from "../config.js";
+import { profile, billing } from "../db.js";
 
 const MAX_AVATAR = 5 * 1024 * 1024; // 5 MB — matches the bucket's limit
 
@@ -94,11 +95,12 @@ async function main() {
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" id="pf-billing">
       <h3 class="section">Billing &amp; subscription</h3>
-      <p class="muted">Coming soon — subscriptions and payments will be managed securely through Stripe.</p>
-      <div class="actions"><button class="btn" disabled>Manage subscription</button></div>
+      <p class="muted small">Loading…</p>
     </div>`;
+
+  renderBilling(root.querySelector("#pf-billing"));
 
   /* ── avatar ── */
   const avatarSlot = root.querySelector("#pf-avatar-slot");
@@ -192,4 +194,68 @@ async function main() {
     msg.textContent = "";
     toast("Password updated.");
   }).then(() => { const m = root.querySelector("#pf-pw-msg"); if (m) m.textContent = ""; });
+}
+
+/* ── billing (the Dungeon Lord subscription) ──
+   billing_status() is the database's word on this account. null means the
+   billing migration isn't applied yet (or demo mode), so we say so instead
+   of showing dead buttons. Cancelling, changing a card and invoices all
+   live in Stripe's Customer Portal — we only mint the link to it. */
+async function renderBilling(card) {
+  const free = CONFIG.TIERS?.FREE?.name || "Adventurer";
+  const dm = CONFIG.TIERS?.DM?.name || "Dungeon Lord";
+  const dmIcon = CONFIG.TIERS?.DM?.icon || "🔥";
+  const head = `<h3 class="section">Billing &amp; subscription</h3>`;
+  const st = (await guard(() => billing.status())) ?? null;
+
+  if (!st) {
+    card.innerHTML = `${head}
+      <p class="muted">Billing isn't set up yet — see <code>docs/BILLING.md</code>.</p>
+      <div class="actions"><a class="btn-ghost" href="./pricing.html">See the plans</a></div>`;
+    return;
+  }
+
+  if (st.tier !== "dm") {
+    card.innerHTML = `${head}
+      <p>You're a free <strong>${esc(free)}</strong> — build heroes, join tables and play.
+      Want to run your own campaigns and unlock the AI dungeon-prep tools?</p>
+      <div class="actions"><a class="btn" href="./pricing.html">${esc(dmIcon)} Become a ${esc(dm)}</a></div>`;
+    return;
+  }
+
+  const sub = st.subscription;
+  if (!sub?.has_customer) {
+    // owner / manual grant: no Stripe customer, nothing to manage
+    card.innerHTML = `${head}
+      <p><span class="pill gold">✓ ${esc(dm)}</span></p>
+      <p class="muted small">Lifetime ${esc(dm)} — there's no subscription to manage on this account.</p>`;
+    return;
+  }
+
+  const status = String(sub.status || "unknown");
+  const healthy = /^(active|trialing)$/.test(status);
+  const when = sub.current_period_end ? fmtDate(sub.current_period_end) : "";
+  const renewLine = !when ? ""
+    : sub.cancel_at_period_end ? `Cancels at period end — access until <strong>${esc(when)}</strong>.`
+    : `Renews on <strong>${esc(when)}</strong>.`;
+  card.innerHTML = `${head}
+    <p><span class="pill gold">✓ ${esc(dm)}</span> <span class="pill ${healthy ? "moss" : "ember"}">${esc(status.replace(/_/g, " "))}</span></p>
+    <p class="muted small">${renewLine || "Managed through Stripe."}</p>
+    <div class="actions">
+      <button class="btn" id="pf-portal">Manage subscription</button>
+      <span class="muted small" id="pf-portal-msg"></span>
+    </div>`;
+  const btn = card.querySelector("#pf-portal");
+  btn.onclick = () => guard(async () => {
+    const msg = card.querySelector("#pf-portal-msg");
+    btn.disabled = true;
+    msg.textContent = "Opening Stripe…";
+    try { location.href = await billing.portal(); }
+    catch (e) {
+      btn.disabled = false;
+      msg.textContent = "";
+      if (e.code === "not-configured") { toast("Billing isn't set up yet — see docs/BILLING.md"); return; }
+      throw e;   // guard → "⚠ <message>" (incl. the clean no-subscription text)
+    }
+  });
 }

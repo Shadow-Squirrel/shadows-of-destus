@@ -1,0 +1,75 @@
+/* ═══════════════════════════════════════════════════════════
+   Pricing — the public plans page (two tier cards + FAQ).
+   Extends style.css; uses the same :root tokens.
+   ═══════════════════════════════════════════════════════════ */
+
+/* ── heading ── */
+.price-head { text-align: center; max-width: 640px; margin: 6px auto 30px; }
+.price-head h2 {
+  font-family: var(--font-display); color: var(--gold); font-size: 30px; letter-spacing: .06em; margin: 0 0 8px;
+  text-shadow: 0 1px 0 rgba(0,0,0,.4), 0 0 24px rgba(212,165,49,.2);
+}
+.price-head p { color: var(--muted); margin: 0; font-size: 17.5px; }
+
+/* ── checkout return notes (?checkout=success|cancelled) ── */
+.price-note { max-width: 860px; margin: 0 auto 22px; animation: price-rise var(--dur-slow) var(--ease); }
+.price-note p { margin: 0 0 12px; }
+.price-note.success { border-color: var(--gold); box-shadow: var(--glow-gold), var(--sh-2), var(--hairline); }
+.price-note.success strong { font-family: var(--font-display); color: var(--gold); letter-spacing: .04em; }
+@keyframes price-rise { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* ── the two tier cards ── */
+.tiers { max-width: 860px; margin: 0 auto; align-items: stretch; }
+.tier { display: flex; flex-direction: column; position: relative; padding: 26px 24px 22px; }
+.tier h3 { font-family: var(--font-display); color: var(--ink); font-size: 22px; letter-spacing: .05em; margin: 0; }
+.tier .tier-price { font-family: var(--font-display); font-weight: 800; font-size: 30px; color: var(--gold); margin: 6px 0 0; line-height: 1.15; }
+.tier .tier-price small { font-size: 14px; font-weight: 600; color: var(--muted); letter-spacing: .05em; }
+.tier .tier-lead { color: var(--muted); font-style: italic; margin: 8px 0 14px; }
+
+/* feature list with ✓ marks */
+.tier ul.feats { list-style: none; padding: 0; margin: 0 0 20px; flex: 1; }
+.tier ul.feats li { position: relative; padding-left: 26px; margin: 8px 0; font-size: 15.5px; line-height: 1.45; }
+.tier ul.feats li::before { content: "✓"; position: absolute; left: 3px; top: 0; color: var(--moss); font-weight: 700; }
+
+/* the highlighted tier: gold border, soft glow, eyebrow tab (same recipe as
+   .opt-card.selected on the character builder) */
+.tier.hi {
+  border-color: var(--gold);
+  background: linear-gradient(180deg, rgba(212,165,49,.16), rgba(212,165,49,.05) 30%, var(--panel) 60%);
+  box-shadow: 0 0 0 1px var(--gold-soft) inset, var(--glow-gold), var(--sh-3);
+}
+.tier.hi h3 { color: var(--gold-bright); }
+.tier.hi ul.feats li::before { color: var(--gold); }
+.tier-eyebrow {
+  position: absolute; top: -13px; left: 20px;
+  padding: 4px 13px; border-radius: 999px;
+  font-family: var(--font-display); font-size: 11.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase;
+  background: linear-gradient(180deg, var(--gold-bright), var(--gold) 55%, var(--gold-soft));
+  color: var(--bg); border: 1px solid var(--gold-bright);
+  box-shadow: var(--sh-1);
+}
+
+/* call-to-action row at the foot of each card */
+.tier-cta { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 14px; margin-top: auto; }
+.tier-cta .tier-alt { color: var(--muted); font-size: 14px; }
+.tier-cta .tier-alt:hover { color: var(--gold); }
+.tier-cta .tier-note { flex-basis: 100%; margin: 0; }
+
+.price-foot { text-align: center; color: var(--faint); font-size: 13.5px; margin: 16px auto 0; max-width: 860px; }
+
+/* ── FAQ ── */
+.faq { max-width: 860px; margin: 30px auto 0; }
+.faq details.fold:first-of-type { border-top: none; margin-top: 0; padding-top: 0; }
+.faq details.fold summary { font-size: 15px; letter-spacing: .04em; color: var(--ink); }
+.faq details.fold p { margin: 8px 0 6px 18px; color: var(--muted); font-size: 15.5px; }
+.faq a { color: var(--gold); }
+
+@media (max-width: 640px) {
+  .price-head h2 { font-size: 24px; }
+  .tier { padding: 22px 16px 18px; }
+  .tier .tier-price { font-size: 26px; }
+  .tier-cta .btn-lg { width: 100%; text-align: center; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .price-note { animation: none; }
+}
