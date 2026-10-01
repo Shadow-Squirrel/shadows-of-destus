@@ -11,7 +11,7 @@ import { CONFIG } from "../config.js";
 // The front door must render even if the database client can't load (CDN
 // blocked, offline) — fall back to the signed-out view rather than a blank page.
 let pub = { mode: "real", session: null, email: null };
-try { pub = await bootPublic("index.html", "Home"); }
+try { pub = await bootPublic("index.html", ""); }   // "" keeps index.html's descriptive <title>
 catch (e) { console.error(e); }
 
 const main = document.getElementById("main");
@@ -122,10 +122,8 @@ main.innerHTML = `
       <p class="quote">Built for one table of friends. Kept for everyone who asked to pull up a chair.</p>
       <p>${esc(CONFIG.APP_NAME)}'s maker is a cybersecurity engineer who loves D&amp;D — and plays it
         religiously, a few times a week, whenever work lets go. They were tired of the virtual
-        tabletops out there: clunky to run, pricey to keep, and locked down exactly where a table
-        wants to tinker. So they built something for their own friend group.</p>
-      <p>Then the other DMs in the group wanted in. Then <em>their</em> friends did. It grew into
-        what is now ${esc(CONFIG.APP_NAME)}.</p>
+        tabletops out there, so they built something for their own friend group.</p>
+      <p>It grew into what is now ${esc(CONFIG.APP_NAME)}.</p>
       <p>The day job shows: its maker cares as much about your table's data being guarded as about
         your fireballs looking right. Every permission is enforced in the database, not the browser,
         and what a DM keeps behind the screen stays behind the screen.</p>

@@ -216,6 +216,7 @@ function renderGate(main) {
   });
   document.getElementById("gate-form").onsubmit = (e) => {
     e.preventDefault();
+    let keepMsg = false;   // the "check your email" notice must survive the cleanup below
     guard(async () => {
       const email = document.getElementById("g-email").value.trim();
       const pass = document.getElementById("g-pass").value;
@@ -229,6 +230,7 @@ function renderGate(main) {
         if (!s) {
           document.getElementById("g-msg").textContent = "Check your email to confirm your account, then sign in.";
           setTab(false);
+          keepMsg = true;
           return;
         }
         location.reload();
@@ -236,7 +238,7 @@ function renderGate(main) {
         await auth.signIn(email, pass);
         location.reload();
       }
-    }).then(() => (document.getElementById("g-msg").textContent = ""));
+    }).then(() => { if (!keepMsg) document.getElementById("g-msg").textContent = ""; });
   };
 }
 
@@ -290,7 +292,10 @@ function siteLink() {
 }
 
 /* ── boot: call this first on every page ── */
-export async function boot(pageFile, pageTitle) {
+// opts.allowNoCampaign: render the page for a signed-in account that belongs
+// to no campaign yet (profile/billing must work for a brand-new subscriber);
+// the ctx then has campaign:null, no members, and a player-role `me`.
+export async function boot(pageFile, pageTitle, opts = {}) {
   document.title = `${pageTitle} · ${CONFIG.APP_NAME}`;
   const main = document.getElementById("main");
   renderFooter();
@@ -345,7 +350,12 @@ export async function boot(pageFile, pageTitle) {
   }
 
   if (!myCampaigns.length) {
-    renderHeader(pageFile, [document.createTextNode(session.email), siteLink(), signOutBtn()]);
+    renderHeader(pageFile, [document.createTextNode(session.email), siteLink(), profileLink(), signOutBtn()]);
+    if (opts.allowNoCampaign) {
+      setCampaign(null);
+      const me = { email: session.email.toLowerCase(), name: "", role: "player", isDM: false };
+      return { mode, me, campaign: null, campaigns: [], members: [], nameOf: nameResolver([], me) };
+    }
     await renderNoCampaigns(main, session.email);
     return null;
   }
@@ -435,23 +445,23 @@ async function renderNoCampaigns(main, email) {
    campaign"). Returns { mode, session, email } — session is null when signed
    out (and a stand-in in demo mode, where the site is always "signed in"). */
 export async function bootPublic(pageFile, pageTitle) {
-  document.title = `${pageTitle} · ${CONFIG.APP_NAME}`;
+  // A falsy pageTitle keeps the page's own <title> (the landing page ships a
+  // descriptive one for search/social).
+  if (pageTitle) document.title = `${pageTitle} · ${CONFIG.APP_NAME}`;
+  const link = (href, text) => {
+    const a = document.createElement("a");
+    a.href = href; a.className = "who-profile"; a.textContent = text;
+    return a;
+  };
+  // Draw the signed-out chrome FIRST, so the page still has a header and
+  // nav even if the database client fails to load (CDN blocked, offline).
+  renderHeader(pageFile, [link("./login.html", "Sign in")], null, PUBLIC_NAV, "./index.html");
   renderFooter();
   const mode = await initDb();
   let session = null;
   try { session = await auth.session(); } catch { session = null; }
   const email = session?.email ? String(session.email).toLowerCase() : null;
-  const who = [];
-  if (session) {
-    const open = document.createElement("a");
-    open.href = "./hub.html"; open.className = "who-profile"; open.textContent = "⚔ Open your campaign";
-    who.push(open);
-  } else {
-    const inn = document.createElement("a");
-    inn.href = "./login.html"; inn.className = "who-profile"; inn.textContent = "Sign in";
-    who.push(inn);
-  }
-  renderHeader(pageFile, who, null, PUBLIC_NAV, "./index.html");
+  if (session) renderHeader(pageFile, [link("./hub.html", "⚔ Open your campaign")], null, PUBLIC_NAV, "./index.html");
   return { mode, session, email };
 }
 
