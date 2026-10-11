@@ -943,62 +943,13 @@ export const vtt = {
   },
 };
 
-/* ═══ AI image generation ═══
-   Portraits and battle maps from FLUX.1 [schnell], produced by the
-   `generate-image` Edge Function (which alone holds the paid
-   provider key). The browser never calls the provider; it invokes
-   the function with the user's JWT attached. The database enforces
-   the monthly cost caps atomically BEFORE any paid call — see
-   supabase/migrations/…_ai_images.sql and docs/AI-IMAGES.md.
-
-   "Not set up yet" is a first-class state: before the function is
-   deployed / a provider key is set, generate() throws with
-   code "not-configured" and usage() returns null, so the UI can
-   show a calm "set up AI generation" note instead of breaking. */
-const notConfigured = () => Object.assign(new Error("AI images aren't set up yet"), { code: "not-configured" });
-
-export const ai = {
-  // {campaignId, kind:'map'|'portrait', prompt} → {path, url, kind, mapId}
-  // Throws with .code==='not-configured' when AI isn't set up, or with
-  // the database's clean cap message ("DM monthly limit reached", …).
-  generate: async ({ campaignId, kind, prompt }) => {
-    if (!sb) throw new Error("AI generation needs the live database — it isn't available in demo mode.");
-    const cid = campaignId || campaignId === 0 ? campaignId : getCampaign();
-    const { data, error } = await sb.functions.invoke("generate-image", {
-      body: { campaignId: cid, kind, prompt },
-    });
-    if (error) {
-      // supabase-js wraps non-2xx as FunctionsHttpError with a Response
-      // in error.context — read the JSON body for a clean message.
-      let msg = error.message || "Image generation failed";
-      try {
-        const b = await error.context.json();
-        if (b?.error === "not-configured") throw notConfigured();
-        if (b?.error) msg = b.error;
-      } catch (inner) {
-        if (inner?.code === "not-configured") throw inner;
-        // function not deployed at all → treat as "not set up yet"
-        if (/Failed to send|Function not found|404|not found/i.test(msg)) throw notConfigured();
-      }
-      throw new Error(msg);
-    }
-    if (data?.error === "not-configured") throw notConfigured();
-    if (data?.error) throw new Error(data.error);
-    return { path: data?.path, url: data?.url, kind: data?.kind, mapId: data?.mapId ?? null };
-  },
-  // The signed-in DM's usage this month: {ym, used, cap, remaining,
-  // global_used, global_cap} — or null if the AI migration/RPC isn't
-  // present yet (so callers can show the "not set up" note).
-  usage: async () => {
-    if (!sb) return null;
-    try { return await q(sb.rpc("ai_usage")); }
-    catch (e) {
-      if (/does not exist|Could not find|schema cache|function/i.test(e?.message || "")) return null;
-      throw e;
-    }
-  },
-  // signed, short-lived URLs for stored portraits (the 'ai-art' bucket)
-  artUrls: async (paths) => {
+/* ═══ Stored art (the private 'ai-art' bucket) ═══
+   Pictures that were generated back when the site had AI tools (homebrew
+   monster art, NPC/character/codex portraits) still live here as art_path
+   values. Nothing is generated any more; this only turns a stored path
+   into a short-lived viewable URL so the pictures keep showing. */
+export const art = {
+  urls: async (paths) => {
     const wanted = (paths || []).filter(Boolean);
     if (!sb || !wanted.length) return {};
     const rows = await q(sb.storage.from("ai-art").createSignedUrls(wanted, 3600));
@@ -1006,134 +957,12 @@ export const ai = {
     rows.forEach((r) => { if (r.signedUrl) out[r.path] = r.signedUrl; });
     return out;
   },
-  // {campaignId, prompt} → a stat-block object (see js/pages/monsters.js).
-  // Uses the SEPARATE AI *text* budget (Claude via the generate-monster
-  // Edge Function). Throws .code==='not-configured' when unset, or the
-  // database's clean cap message.
-  generateMonster: async ({ campaignId, prompt }) => {
-    if (!sb) throw new Error("AI generation needs the live database — it isn't available in demo mode.");
-    const cid = campaignId || campaignId === 0 ? campaignId : getCampaign();
-    const { data, error } = await sb.functions.invoke("generate-monster", {
-      body: { campaignId: cid, prompt },
-    });
-    if (error) {
-      let msg = error.message || "Monster generation failed";
-      try {
-        const b = await error.context.json();
-        if (b?.error === "not-configured") throw notConfigured();
-        if (b?.error) msg = b.error;
-      } catch (inner) {
-        if (inner?.code === "not-configured") throw inner;
-        if (/Failed to send|Function not found|404|not found/i.test(msg)) throw notConfigured();
-      }
-      throw new Error(msg);
-    }
-    if (data?.error === "not-configured") throw notConfigured();
-    if (data?.error) throw new Error(data.error);
-    return data?.monster || null;
-  },
-  // AI DM-prep accelerator: {campaignId, description, partyLevel, partySize,
-  // difficulty, srd:[{i,n,cr}]} → a plan object
-  //   { title, summary, map_prompt, monsters:[{name, srd_index, count, cr,
-  //     homebrew_prompt}] }
-  // Spends ONE slot of the AI *text* budget (the plan itself). The map and any
-  // generated homebrew monsters are billed separately as the caller runs them.
-  // Throws .code==='not-configured' when unset, or the DB's clean cap message.
-  planEncounter: async ({ campaignId, description, partyLevel, partySize, difficulty, srd }) => {
-    if (!sb) throw new Error("AI generation needs the live database — it isn't available in demo mode.");
-    const cid = campaignId || campaignId === 0 ? campaignId : getCampaign();
-    const { data, error } = await sb.functions.invoke("plan-encounter", {
-      body: { campaignId: cid, description, partyLevel, partySize, difficulty, srd },
-    });
-    if (error) {
-      let msg = error.message || "Encounter planning failed";
-      try {
-        const b = await error.context.json();
-        if (b?.error === "not-configured") throw notConfigured();
-        if (b?.error) msg = b.error;
-      } catch (inner) {
-        if (inner?.code === "not-configured") throw inner;
-        if (/Failed to send|Function not found|404|not found/i.test(msg)) throw notConfigured();
-      }
-      throw new Error(msg);
-    }
-    if (data?.error === "not-configured") throw notConfigured();
-    if (data?.error) throw new Error(data.error);
-    return data?.plan || null;
-  },
-  // AI Create-Adventure: {campaignId, brief, partyLevel, partySize, difficulty,
-  // scenes, srd:[{i,n,cr}]} → a full adventure object
-  //   { title, location, overview, xp_budget, scenes:[{title, kind, boss,
-  //     read_aloud, dm_notes, monsters:[…], puzzle, treasure}],
-  //     npcs:[{name, role, personality, secret, voice, lines:[]}],
-  //     treasure_overall }
-  // Spends ONE slot of the AI *text* budget (the whole adventure). Any battle
-  // maps and generated monsters are billed separately when the DM stages a
-  // combat scene onto the Battle map. Throws .code==='not-configured' when
-  // unset, or the database's clean cap message.
-  planAdventure: async ({ campaignId, brief, partyLevel, partySize, difficulty, scenes, srd }) => {
-    if (!sb) throw new Error("AI generation needs the live database — it isn't available in demo mode.");
-    const cid = campaignId || campaignId === 0 ? campaignId : getCampaign();
-    const { data, error } = await sb.functions.invoke("plan-adventure", {
-      body: { campaignId: cid, brief, partyLevel, partySize, difficulty, scenes, srd },
-    });
-    if (error) {
-      let msg = error.message || "Adventure planning failed";
-      try {
-        const b = await error.context.json();
-        if (b?.error === "not-configured") throw notConfigured();
-        if (b?.error) msg = b.error;
-      } catch (inner) {
-        if (inner?.code === "not-configured") throw inner;
-        if (/Failed to send|Function not found|404|not found/i.test(msg)) throw notConfigured();
-      }
-      throw new Error(msg);
-    }
-    if (data?.error === "not-configured") throw notConfigured();
-    if (data?.error) throw new Error(data.error);
-    return data?.adventure || null;
-  },
-  // {campaignId, kind:'spell'|…, prompt} → a schema-shaped draft object for
-  // that homebrew editor (see supabase/functions/generate-homebrew). Draws the
-  // SAME AI *text* budget as monsters. Throws .code==='not-configured' when
-  // unset, or the database's clean cap message.
-  generateHomebrew: async ({ campaignId, kind, prompt }) => {
-    if (!sb) throw new Error("AI generation needs the live database — it isn't available in demo mode.");
-    const cid = campaignId || campaignId === 0 ? campaignId : getCampaign();
-    const { data, error } = await sb.functions.invoke("generate-homebrew", {
-      body: { campaignId: cid, kind, prompt },
-    });
-    if (error) {
-      let msg = error.message || "Generation failed";
-      try {
-        const b = await error.context.json();
-        if (b?.error === "not-configured") throw notConfigured();
-        if (b?.error) msg = b.error;
-      } catch (inner) {
-        if (inner?.code === "not-configured") throw inner;
-        if (/Failed to send|Function not found|404|not found/i.test(msg)) throw notConfigured();
-      }
-      throw new Error(msg);
-    }
-    if (data?.error === "not-configured") throw notConfigured();
-    if (data?.error) throw new Error(data.error);
-    return data?.result || null;
-  },
-  // The signed-in DM's AI *text* usage this month, or null if not set up.
-  textUsage: async () => {
-    if (!sb) return null;
-    try { return await q(sb.rpc("ai_text_usage")); }
-    catch (e) {
-      if (/does not exist|Could not find|schema cache|function/i.test(e?.message || "")) return null;
-      throw e;
-    }
-  },
 };
 
 /* ═══ Homebrew monsters (custom stat blocks, per campaign) ═══
    Ordinary content, like maps: party members read, only a DM writes
    (direct-write RLS). Built by hand or with AI; an optional portrait
-   lives in the 'ai-art' bucket (reuse ai.artUrls to view it). */
+   lives in the 'ai-art' bucket (art.urls shows it). */
 export const homebrewMonsters = {
   list: async () =>
     sb
@@ -1242,41 +1071,12 @@ export const homebrewOptions = {
   },
 };
 
-/* ═══ Adventures (saved AI DM-prep documents, per campaign) ═══
-   One row = one adventure the DM generated or wrote: a named location
-   plus a `data` blob (scenes, NPCs, treasure, XP note — see
-   js/pages/adventures.js). Same ownership as the homebrew content:
-   party members read, only a DM writes. Combat scenes are staged onto
-   the Battle map by handing their roster to the VTT's ⚡ AI-prep builder. */
-export const adventures = {
-  list: async () =>
-    sb
-      ? q(scope(sb.from("adventures").select("*")).order("created_at", { ascending: false }))
-      : (DEMO.adventures || []).filter(inCampaign),
-  // row: {id?, title, location, data}
-  save: async (row) => {
-    const fields = { title: row.title || "New adventure", location: row.location || "", data: row.data || {} };
-    if (!sb) {
-      DEMO.adventures ||= [];
-      if (row.id) return Object.assign(DEMO.adventures.find((m) => m.id === row.id) || {}, fields);
-      const m = { ...fields, id: uid(), campaign_id: campaignId, created_at: new Date().toISOString() };
-      DEMO.adventures.unshift(m); return m;
-    }
-    if (row.id) { await q(sb.from("adventures").update(fields).eq("id", row.id)); return { id: row.id }; }
-    return q(sb.from("adventures").insert(stamp(fields)).select("*").single());
-  },
-  remove: async (id) => {
-    if (!sb) return (DEMO.adventures = (DEMO.adventures || []).filter((m) => m.id !== id));
-    await q(sb.from("adventures").delete().eq("id", id));
-  },
-};
-
 /* ═══ NPCs (the DM's private cast, per campaign) ═══
    DM-ONLY: only the campaign DM can read or write these, because they
    carry secrets the players must not see (enforced by RLS, not the
    browser). `data` holds the NPC blob (race, role, personality, secret,
    voice, inventory — see js/pages/npcs.js); an optional AI portrait
-   lives in the 'ai-art' bucket (view it with ai.artUrls). "Reveal" makes
+   lives in the 'ai-art' bucket (art.urls shows it). "Reveal" makes
    a public codex entry and stores its id in codex_entry_id. */
 export const npcs = {
   list: async () =>
@@ -1495,77 +1295,3 @@ export const profile = {
   },
 };
 
-/* ═══ Billing — the "Dungeon Lord" subscription (Stripe) ═══
-   The browser never talks to Stripe. billing_status() is a DB RPC that
-   reports the caller's tier + their own subscriptions row; checkout and
-   the customer portal are Edge Functions (create-checkout-session,
-   billing-portal) that mint a Stripe-hosted URL we simply redirect to.
-   The webhook that flips the tier is server-to-server (never called here).
-
-   "Not set up yet" is a first-class state, same as ai.generate: status()
-   returns null when the billing migration isn't applied (or in demo), and
-   checkout()/portal() throw .code==='not-configured' when the function
-   isn't deployed or its Stripe secrets aren't set — so pages can show a
-   calm "coming soon" instead of a broken button. See docs/BILLING.md. */
-const billingNotConfigured = () => Object.assign(new Error("Billing isn't set up yet"), { code: "not-configured" });
-
-// Invoke a billing function (body {}) and return the URL it minted. `known`
-// maps the function's own error codes ({error:"already-subscribed"} on a
-// 409, {error:"no-subscription"} on a 404, …) to a friendly message; the
-// thrown Error carries the code so pages can branch without string-matching.
-async function billingInvoke(fn, known = {}) {
-  if (!sb) throw new Error("Billing needs the live database — it isn't available in demo mode.");
-  // own-property check so a stray code like "constructor" can't hit Object.prototype
-  const coded = (code) => (typeof code === "string" && Object.hasOwn(known, code)
-    ? Object.assign(new Error(known[code]), { code }) : null);
-  const { data, error } = await sb.functions.invoke(fn, { body: {} });
-  if (error) {
-    // supabase-js wraps non-2xx as FunctionsHttpError with the Response in
-    // error.context — read the JSON body for the code / a clean message.
-    let msg = error.message || "Billing request failed";
-    try {
-      const b = await error.context.json();
-      if (b?.error === "not-configured") throw billingNotConfigured();
-      if (coded(b?.error)) throw coded(b.error);
-      if (b?.error) msg = b.error;
-      // a 404 with no {error} of ours is the gateway: function not deployed
-      else if (error.context.status === 404) throw billingNotConfigured();
-      else if (b?.message) msg = b.message;
-    } catch (inner) {
-      if (inner?.code) throw inner;
-      // function not deployed / unreachable → treat as "not set up yet"
-      if (/Failed to send|Function not found|404|not found/i.test(msg)) throw billingNotConfigured();
-    }
-    throw new Error(msg);
-  }
-  if (data?.error === "not-configured") throw billingNotConfigured();
-  if (coded(data?.error)) throw coded(data.error);
-  if (data?.error) throw new Error(data.error);
-  if (typeof data?.url !== "string" || !data.url) throw new Error("Billing didn't return a link to continue");
-  return data.url;
-}
-
-export const billing = {
-  // The signed-in user's billing picture from the database:
-  //   { tier:'dm'|'free', is_creator, creator_source:'manual'|'stripe'|null,
-  //     subscription: null | { status, current_period_end, cancel_at_period_end, has_customer } }
-  // …or null if the billing migration/RPC isn't present yet (or demo mode).
-  status: async () => {
-    if (!sb) return null;
-    try { return await q(sb.rpc("billing_status")); }
-    catch (e) {
-      if (/does not exist|Could not find|schema cache|function/i.test(e?.message || "")) return null;
-      throw e;
-    }
-  },
-  // Start a subscription: returns the Stripe Checkout URL to send the
-  // browser to. Throws .code 'not-configured' | 'already-subscribed'.
-  checkout: () => billingInvoke("create-checkout-session", {
-    "already-subscribed": "You already have a subscription — manage it from your profile.",
-  }),
-  // Manage an existing subscription (cancel, card, invoices): returns the
-  // Stripe Customer Portal URL. Throws .code 'not-configured' | 'no-subscription'.
-  portal: () => billingInvoke("billing-portal", {
-    "no-subscription": "There's no subscription on this account to manage.",
-  }),
-};
