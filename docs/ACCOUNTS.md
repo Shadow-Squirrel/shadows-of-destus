@@ -40,12 +40,15 @@ which breaks the reset flow — so both entries are required.
 
 ## 3. Confirm email
 
-**Authentication → Providers → Email → "Confirm email": ON.**
+**Authentication → Providers → Email → "Confirm email": OFF** for a private
+table.
 
-With this on, a new account must click a confirmation link before it can sign
-in. The join flow already handles the "check your email to confirm" state, and
-keeping accounts email-verified is what makes campaign-mate profile sharing
-trustworthy (the email really belongs to the person).
+The invite / member list is the real gate — an account that isn't on it sees
+nothing — so there's no need to make friends click a confirmation link. It
+also means sign-up doesn't depend on email arriving at all. If you ever want
+it on (so an address is proven to belong to the person), set up custom SMTP
+first (next section); with the built-in mailer, confirmation emails stop
+after a couple of sign-ups and nobody can get in.
 
 ## 4. SMTP — do this, or password resets stop after two emails
 
@@ -82,12 +85,23 @@ down. The permanent fix is a real email provider — about ten minutes, free.
 > Until the domain verifies, Resend will only send from `onboarding@resend.dev`
 > and only to your own address — fine for a test, not for the party.
 
-### No email at all? The DM can reset a password by hand
+### No email at all? Set a player's password by hand
 
-Supabase → **Authentication → Users** → the person's row → **"…" → Reset
-password** (or *Send magic link*). The login gate tells people to ask their
-DM when the mail doesn't come, so this is a perfectly good fallback for a
-table of friends.
+The dashboard's **Authentication → Users → "…" → Send password recovery**
+only sends *another email* through the same mailer, so it doesn't help until
+SMTP is set up. What always works is setting the password directly. Supabase →
+**SQL Editor → New query**, with the player's email and a temporary password
+of your choosing:
+
+```sql
+update auth.users
+   set encrypted_password = crypt('temporary-password-here', gen_salt('bf'))
+ where email = 'player@example.com';
+```
+
+Tell them the temporary password, and have them change it on their **⚙
+Profile** page once they're in. The login gate already tells people to ask
+their DM when the reset mail doesn't come, so this is the fallback it means.
 
 You may also want to customise the **email templates** (Authentication →
 Emails) so the "Reset password" and "Confirm signup" messages match the Onyx
