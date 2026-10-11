@@ -1,140 +1,26 @@
-# Onyx Dungeon — backlog (planned, not yet built)
+# Onyx Dungeon — backlog
 
-Captured from the owner. Not started; listed roughly by theme. Notes connect
-each item to what already exists so we don't rebuild.
+The site is a **private campaign hub for one table of friends**. It used to be
+heading toward a product (public landing page, paid DM tier, AI prep tools);
+that was deliberately rolled back in October 2026 — see the
+`private_table_cleanup` migration and the git history if you ever want any of
+it back. What's here now is what the table actually uses.
 
-## AI-powered DM prep (flagship — "the area to dominate")
-Positioning: **AI removes the boring prep, it does NOT play D&D for you.** Aligns
-with WotC's stated 2026 priority of cutting DM prep + tool/tab-switching.
+## Ideas worth doing for the table
+- **Fog of war / reveal-as-you-explore** on the battle map.
+- **Session recap** page or template — a notes entry the DM fills after each
+  session, pinned on Home.
+- **Ambient soundboard** — a few mood tracks / effects for the DM.
+- **Player handouts** — push an image or letter to everyone's screen mid-session
+  (the map-reveal plumbing already does most of this).
+- **In-world calendar** — track the campaign's dates and travel days.
+- **Party ledger** — shared gold and loot.
+- Finish the **Origins** homebrew editor (races/subclasses — scaffolded in
+  `homebrew_options`, no UI yet).
 
-> **Status:** ⚡ single-encounter accelerator SHIPPED (`plan-encounter`, on the
-> Battle map). Full **Create-Adventure** SHIPPED — the 📖 Adventures page
-> (`adventures.html` / `js/pages/adventures.js`, `plan-adventure` function,
-> `adventures` table) drafts a whole adventure (named location, ordered scenes
-> with boxed read-aloud text + DM notes, a puzzle, a boss, NPCs, treasure, XP
-> budget) and stages any combat scene onto the Battle map. See
-> [`AI-ADVENTURES.md`](./AI-ADVENTURES.md). **Still open below:** the standalone
-> **NPC generator** (with portrait), the **monster generator** already exists as
-> the Bestiary, and **smart combat** (assist/confirm/apply).
+## Housekeeping
+- Set up **custom SMTP** so password-reset emails always arrive
+  (`docs/ACCOUNTS.md`, section 4).
+- The legal pages are templates with a few `[bracketed]` fields left to fill.
 
-The flow the owner described:
-- **"Create Encounter"** + a natural-language brief (e.g. *"an abandoned dwarven
-  mine for four level-6 characters, a hidden cult, three encounters, a puzzle,
-  and a boss"*) → Onyx generates a structured adventure:
-  named location, ordered encounters, a puzzle, a boss, **suggested treasure**,
-  **XP/difficulty** (budgeted to party level/size), **NPC dialogue ideas**, and
-  **boxed read-aloud descriptions**.
-- **"Generate Map"** → makes/imports the battlemap (reuses the FLUX.1 image
-  feature already built).
-- **"Add Encounter to Map"** → auto-stages the tokens (e.g. Cult Scout ×4, Void
-  Acolyte ×2, Champion ×1) with **HP and initiative already rolled/ready**.
-
-Build-on / feasibility:
-- The **token/encounter system already exists** (VTT), so auto-staging monsters
-  with HP + initiative is mostly wiring on top of it.
-- Monster stats come from the **SRD bestiary already shipped**; generated
-  custom creatures map to the same token shape (or a homebrew statblock).
-- Needs a **text-LLM** integration (encounter design, NPC lines, boxed text) —
-  a new Edge Function alongside the image one, behind the **same cost-safety
-  cap pattern** (per-DM + global monthly caps, prepaid provider ceiling).
-- Output is **editable**, not final — the DM tweaks before running it.
-
-### AI NPC generator — SHIPPED
-The 🎭 NPCs page (`npcs.html` / `js/pages/npcs.js`, DM-only `campaign_npcs`
-table, `npc` kind in `generate-homebrew`) drafts a full NPC (name, race, role,
-personality, **secret**, **voice**, **inventory**) + a **portrait** (FLUX), all
-editable. Secrets are DM-only (RLS); **Reveal to Codex** publishes the public
-details + portrait to the shared 🐉 Codex. Same cost-caps as image/text AI.
-See [`AI-NPCS.md`](./AI-NPCS.md).
-
-### AI monster generator
-DM types e.g. *"a CR 7 undead crocodile boss"* → Onyx builds a statblock
-(name, CR, HP, AC, actions, legendary actions, traits like "Death Roll",
-"Swamp Ambush"). Then **"Generate Token"** → it's playable on the VTT (same
-token/HP/initiative shape as SRD monsters). Editable before use.
-
-## Homebrew & in-play tools
-- **Make homebrew stupidly easy** — one-click **Create Monster / Spell / Item /
-  Class / Subclass / Race-Species / Feat** with a **structured form editor**
-  (fields + checkboxes, e.g. Name / Level / School / Range / Damage / Damage
-  Type / ☑ Upcast → +1d8 per level), NOT a scripting language. Output is
-  **immediately usable by character sheets and the VTT**. Build-on: the model
-  already stores `{kind:"custom"}` races/subclasses/backgrounds + custom
-  spells/feats/attacks/items — these editors are friendly front-ends onto that
-  same shape, and the marketplace can sell the results.
-- **Smart combat (assist, don't automate) — SHIPPED.** On the Battle map, using
-  a token's attack action and tapping a target now rolls to-hit, reads the
-  verdict vs the target's AC (crit on nat-20, miss on nat-1), rolls damage
-  (doubled on a crit), then **asks "Apply N to <target>? [Apply]"** — the DM
-  confirms; nothing is auto-applied. Reduces the target token's HP on Apply.
-  Pure frontend (`js/pages/vtt.js`), no deploy needed.
-
-## Community & network effects
-- **LFG ("Find a Game")** — a game-discovery board: players browse open
-  campaigns filtered by **System, Experience (beginner-friendly…), Day, Time,
-  Style (☑ roleplay / ☑ combat / hardcore), Voice (Discord…), Cost, Age
-  (18+…)** → **Join Campaign** (ties into the invite/redeem system already
-  built). Strong network effect; D&D Beyond put LFG on its 2026 roadmap, so
-  discovery is strategically validated. Needs a public "listing" opt-in per
-  campaign + moderation.
-- **Deep Discord integration — SHIPPED (v1, webhook-based).** DMs connect a
-  channel **webhook** on the Party page (🔗 Discord, DM-only); Onyx posts game
-  reminders, session recaps, announcements, and (optionally) dice results
-  (off / crits-only / every roll). Manual posts via the `discord-post` Edge
-  Function; auto-dice via a `rolls` trigger + pg_net. Webhook URL is a secret,
-  stored DM-only (`campaign_discord`). See [`DISCORD.md`](./DISCORD.md).
-  *Future v2:* a bot/OAuth for two-way features (slash commands, [Join Session]
-  buttons) — needs a hosted interactions endpoint, so deferred.
-
-## Legal & trust
-- **Privacy Policy / Terms / DMCA process** — Terms, Privacy, and Licenses pages
-  already exist as reviewed-templates (`terms.html`, `privacy.html`,
-  `licenses.html`, linked in the footer). Still to add: a **DMCA / takedown
-  policy** page + a reporting channel and a documented notice-and-takedown
-  workflow (important once users upload maps/art and share homebrew).
-- **Content moderation** — needed because users upload images (map uploads, AI
-  art) and write homebrew text. Wants: a report button, a moderation queue/mod
-  tooling, and a removal path. Ties into DMCA above and to storage RLS.
-
-## Payments & commerce
-- **Secure payment processing — SHIPPED (Stripe; needs the owner's one-time
-  setup).** Stripe Checkout + Customer Portal, no card data stored (PCI SAQ A).
-  The **Dungeon Lord** subscription is the buyer's email in `campaign_creators`
-  (`source = 'stripe'`), granted/revoked ONLY by the signed `stripe-webhook`
-  Edge Function; `create-checkout-session` / `billing-portal` mint the hosted
-  Stripe URLs; the `billing_status()` RPC feeds the pricing + profile pages.
-  Migration `20260925120000_billing.sql`; proofs in `tools/run-billing-tests.sh`.
-  Until the Stripe secrets are set the pricing page shows "coming soon". See
-  [`BILLING.md`](./BILLING.md).
-- **Marketplace infrastructure** — a storefront where **creators sell their own
-  content** and buyers get it in-app. Details from the owner:
-  - **What creators sell:** custom **classes and races** (homebrew), **theme
-    packs**, **maps / map packs**, tokens, adventures, asset packs.
-  - **Revenue split:** **creator 70% / Onyx Dungeon 30%** of each sale.
-  - **Purchase → use flow:** a **DM buys** an item → it's **added to that DM's
-    campaign** → **the party can access it if the DM chooses** (DM toggles
-    visibility to players). Custom classes/races become selectable in the
-    character builder for that campaign.
-  - **Build-on:** the character builder already supports `{kind:"custom"}`
-    races/subclasses/backgrounds + custom spells/feats — marketplace classes &
-    races extend that same homebrew shape, gated by an entitlement.
-  - **Infra:** listings, search, reviews/ratings; creator payouts via **Stripe
-    Connect** (handles the split + tax/1099s); creator onboarding + content
-    review/moderation before listing.
-- **Digital entitlement system** — the engine under the marketplace: records who
-  owns/licensed what, grants/revokes access, and gates content (a bought class,
-  map pack, or adventure) behind the buyer's entitlement — scoped so a DM's
-  purchase unlocks it for their campaign, and optionally their players. Also
-  powers the "how D&D products would work" demo.
-
-## Growth & fundraising
-- **Strong analytics** — active-users dashboard (DAU/MAU, retention, campaigns
-  created, sessions run). Privacy-respecting; feeds the investor story.
-- **Professional investor / partner deck** — pitch deck (problem, product,
-  traction, market, model, roadmap, team, ask).
-- **Technical demonstration of how D&D products would work** — a concrete demo
-  of a purchased adventure/module: how buying it unlocks maps, statblocks,
-  quests, and drops them into a DM's campaign (entitlements → content).
-
----
 *Add to this list as ideas come up; pull items out when they become active tasks.*

@@ -2,10 +2,9 @@
 // Items live in `homebrew_items` (per campaign); the party reads,
 // only a DM writes. An item authored here can be handed to any
 // character, where it lands in that sheet's inventory carrying its
-// full details. AI drafting shares the `generate-homebrew` Edge
-// Function (kind: item) and the AI *text* bill cap with spells/monsters.
+// full details.
 import { boot, esc, md, guard, toast } from "../shell.js";
-import { homebrewItems, characters, ai, getCampaign, isReal } from "../db.js";
+import { homebrewItems, characters } from "../db.js";
 import { openModal } from "./characters/common.js";
 import { migrateCharacter } from "../dnd/model.js";
 
@@ -14,7 +13,7 @@ const RARITIES = ["common", "uncommon", "rare", "very rare", "legendary", "artif
 const RARITY_PILL = { common: "", uncommon: "moss", rare: "steel", "very rare": "mystic", legendary: "gold", artifact: "ember" };
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 
-// Normalize an AI draft / stored blob into the canonical item shape.
+// Normalize a form submission / stored blob into the canonical item shape.
 function toItem(raw = {}) {
   const r = raw || {};
   const type = String(r.type || "").trim().toLowerCase();
@@ -65,7 +64,6 @@ async function main() {
       </div>
       <p class="muted small" style="margin-top:-6px">Homebrew magic items & gear for this campaign. Hand one to a
         character and it drops straight into their inventory with all its details.${isDM ? "" : " Your DM curates this hoard."}</p>
-      ${isDM ? `<div id="ai-slot"></div>` : ""}
       <div id="form-slot"></div>
       <div class="grid" id="grid" style="grid-template-columns:repeat(auto-fill, minmax(300px, 1fr))"></div>`;
 
@@ -79,66 +77,6 @@ async function main() {
 
     const nb = root.querySelector("#new-it");
     if (nb) nb.onclick = () => openForm();
-    if (isDM) renderAi();
-  }
-
-  /* ── ✨ Forge an item with AI (DM only) ── */
-  async function renderAi() {
-    const slot = root.querySelector("#ai-slot");
-    if (!slot || !isReal()) return;
-
-    let usage = null;
-    try { usage = await ai.textUsage(); } catch { usage = null; }
-
-    if (!usage) {
-      slot.innerHTML = `
-        <div class="card ai-card">
-          <div class="row" style="justify-content:space-between; align-items:center">
-            <strong>✨ Forge an item with AI</strong>
-            <span class="pill mystic">not set up</span>
-          </div>
-          <p class="muted small" style="margin:6px 0 0">AI drafting isn't set up yet. Deploy the
-            <code>generate-homebrew</code> function and set a provider key — see <code>docs/AI-HOMEBREW.md</code>.
-            You can still forge items by hand.</p>
-        </div>`;
-      return;
-    }
-
-    const left = usage.remaining ?? 0;
-    slot.innerHTML = `
-      <div class="card ai-card">
-        <div class="row" style="justify-content:space-between; align-items:center">
-          <strong>✨ Forge an item with AI</strong>
-          <span class="pill ${left > 0 ? "moss" : "ember"}" title="Shared with spells & monsters · resets monthly">${left} of ${usage.cap ?? "?"} left this month</span>
-        </div>
-        <p class="muted small" style="margin:6px 0 8px">Describe it and the AI drafts a balanced magic item for you to review and edit. Failed drafts don't count against your quota.</p>
-        <textarea id="ai-prompt" style="min-height:56px" placeholder="e.g. an uncommon dagger that whispers warnings, +1, once a day cast fog cloud"></textarea>
-        <div class="actions">
-          <button class="btn" id="ai-go" ${left > 0 ? "" : "disabled"}>${left > 0 ? "✨ Forge item" : "Monthly limit reached"}</button>
-          <span class="muted small" id="ai-msg"></span>
-        </div>
-      </div>`;
-
-    slot.querySelector("#ai-go").onclick = () => {
-      const prompt = slot.querySelector("#ai-prompt").value.trim();
-      if (!prompt) { toast("Describe the item first"); return; }
-      const go = slot.querySelector("#ai-go");
-      go.disabled = true;
-      slot.querySelector("#ai-msg").textContent = "Consulting the artificers… (a few seconds)";
-      guard(async () => {
-        try {
-          const draft = await ai.generateHomebrew({ campaignId: getCampaign(), kind: "item", prompt });
-          if (!draft) throw new Error("No item came back");
-          openForm(toItem(draft));
-          toast("Draft ready — review it, then Save to the armory");
-        } catch (e) {
-          if (e.code === "not-configured") { renderAi(); toast("AI drafting isn't set up yet — see docs/AI-HOMEBREW.md"); return; }
-          go.disabled = false;
-          slot.querySelector("#ai-msg").textContent = "";
-          toast("⚠ " + (e.message || "Drafting failed"));
-        }
-      });
-    };
   }
 
   /* ── an item card ── */

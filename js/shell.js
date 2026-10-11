@@ -66,45 +66,39 @@ export async function guard(fn) {
 }
 
 /* ── shared header ── */
-// The signed-in app nav. (index.html is the PUBLIC landing page; the
-// campaign home lives at hub.html.)
+// The nav, in the order a player reaches for things: play first, then the
+// campaign's lore, then the DM's workshop. A third element `true` marks a
+// tab as DM-only (players never see it).
 const NAV = [
-  ["hub.html", "⚔️ Home"],
-  ["quests.html", "📜 Quests"],
-  ["maps.html", "🗺️ Maps"],
-  ["codex.html", "🐉 Codex"],
-  ["npcs.html", "🎭 NPCs"],
-  ["notes.html", "🖋️ Notes"],
+  ["index.html", "⚔️ Home"],
   ["characters.html", "🧙 Characters"],
+  ["vtt.html", "⚔️ Battle"],
+  ["dice.html", "🎲 Dice"],
+  ["maps.html", "🗺️ Maps"],
+  ["quests.html", "📜 Quests"],
+  ["codex.html", "🐉 Codex"],
+  ["notes.html", "🖋️ Notes"],
+  ["party.html", "🛡️ Party"],
   ["spells.html", "✨ Spellbook"],
   ["items.html", "🎒 Armory"],
   ["monsters.html", "👹 Bestiary"],
-  ["adventures.html", "📖 Adventures"],
-  ["vtt.html", "⚔️ Battle"],
-  ["dice.html", "🎲 Dice"],
-  ["party.html", "🛡️ Party"],
-];
-// The public nav: what visitors see before they sign in (landing, pricing,
-// the sign-in page, and any gated page they hit while signed out).
-export const PUBLIC_NAV = [
-  ["index.html", "🏰 Home"],
-  ["pricing.html", "💎 Pricing"],
-  ["login.html", "⚔️ Enter the Dungeon"],
+  ["npcs.html", "🎭 NPCs", true],
 ];
 
-// navItems: NAV (signed-in app) or PUBLIC_NAV. brandHref: where the wordmark
-// links (the app home for members, the landing page for visitors).
-function renderHeader(pageFile, who, tagline, navItems = NAV, brandHref = "./hub.html") {
+// opts.isDM hides DM-only tabs from players; opts.nav=false draws no nav at
+// all (the signed-out gate, where there's nothing to open yet).
+function renderHeader(pageFile, who, tagline, { isDM = false, nav = true } = {}) {
+  const items = nav ? NAV.filter(([, , dmOnly]) => !dmOnly || isDM) : [];
   const header = document.getElementById("site-header");
   header.innerHTML = `
     <div class="masthead">
-      <h1><a href="${esc(brandHref)}">${esc(CONFIG.APP_NAME)}</a></h1>
+      <h1><a href="./index.html">${esc(CONFIG.APP_NAME)}</a></h1>
       ${tagline ? `<span class="tagline">${esc(tagline)}</span>` : ""}
       <span class="who" id="who-slot"></span>
     </div>
-    <nav class="site">
-      ${navItems.map(([file, label]) => `<a href="./${file}" class="${file === pageFile ? "active" : ""}">${label}</a>`).join("")}
-    </nav>`;
+    ${items.length ? `<nav class="site">
+      ${items.map(([file, label]) => `<a href="./${file}" class="${file === pageFile ? "active" : ""}">${label}</a>`).join("")}
+    </nav>` : ""}`;
   document.getElementById("who-slot").replaceChildren(...who);
 }
 
@@ -169,19 +163,18 @@ function banner(html, isErr = false) {
 }
 
 /* ── the login gate (real mode, not signed in) ──
-   Anyone can create a free account (an "Adventurer"); a link like
-   login.html#create opens straight on the Create-account tab. */
+   A private table: sign in, or create an account with the email your DM
+   invited (an invite link drops you straight in). */
 function renderGate(main) {
-  const free = CONFIG.TIERS?.FREE?.name || "Adventurer";
   main.innerHTML = `
     <div class="card gate">
       <h2>${esc(CONFIG.APP_NAME)}</h2>
-      <p class="muted small">Sign in, or create a <strong>free ${esc(free)} account</strong> — build heroes,
-      join your friends' tables and play. Got an invite link from a DM? Open it and
-      you'll land straight at their table.</p>
+      <p class="muted small">Welcome back, adventurer. Sign in to reach the table. New here? Create an
+      account with the email your DM invited — or open the invite link they sent you and
+      you'll land straight at the table.</p>
       <div class="tabs">
         <button class="btn" id="tab-in">Sign in</button>
-        <button class="btn-ghost" id="tab-up">Create free account</button>
+        <button class="btn-ghost" id="tab-up">Create account</button>
       </div>
       <form id="gate-form">
         <label class="field">Email</label>
@@ -204,15 +197,21 @@ function renderGate(main) {
   };
   document.getElementById("tab-in").onclick = () => setTab(false);
   document.getElementById("tab-up").onclick = () => setTab(true);
-  if (location.hash === "#create") setTab(true);   // deep link from the landing/pricing pages
   // Forgot password → email a reset link (Supabase Auth). The reset flow
-  // completes on the public reset.html page the link lands on.
+  // completes on the public reset.html page the link lands on. The DM can
+  // always reset a password by hand (Supabase → Authentication → Users), so
+  // say so when the mail doesn't come through.
   document.getElementById("g-forgot").onclick = () => guard(async () => {
     const pre = document.getElementById("g-email").value.trim();
     const email = (prompt("Enter your account email and we'll send a password-reset link:", pre) || "").trim();
     if (!email) return;
-    await profile.sendReset(email);
-    toast("Check your email for a reset link.");
+    try {
+      await profile.sendReset(email);
+      toast("Check your email for a reset link. Nothing after a few minutes? Ask your DM — they can reset it for you.");
+    } catch (e) {
+      if (/rate limit/i.test(e?.message || "")) { toast("The mail server is busy right now — ask your DM to reset your password for you."); return; }
+      throw e;
+    }
   });
   document.getElementById("gate-form").onsubmit = (e) => {
     e.preventDefault();
@@ -280,20 +279,10 @@ function profileLink() {
   return a;
 }
 
-// Back to the public front page (landing + plans) — the app nav's Home tab
-// is the campaign hub, so members need this to reach the site itself.
-function siteLink() {
-  const a = document.createElement("a");
-  a.href = "./index.html";
-  a.className = "who-profile";
-  a.title = "The site's front page";
-  a.textContent = "🏰 Site";
-  return a;
-}
 
 /* ── boot: call this first on every page ── */
 // opts.allowNoCampaign: render the page for a signed-in account that belongs
-// to no campaign yet (profile/billing must work for a brand-new subscriber);
+// to no campaign yet (the profile page should still work for them);
 // the ctx then has campaign:null, no members, and a player-role `me`.
 export async function boot(pageFile, pageTitle, opts = {}) {
   document.title = `${pageTitle} · ${CONFIG.APP_NAME}`;
@@ -307,7 +296,7 @@ export async function boot(pageFile, pageTitle, opts = {}) {
     const currentId = chooseCampaign(list);
     setCampaign(currentId);
     const current = list.find((c) => c.id === currentId);
-    renderHeader(pageFile, [pill("demo mode", "mystic"), campaignSwitcher(list, currentId), siteLink(), profileLink()], current?.tagline);
+    renderHeader(pageFile, [pill("demo mode", "mystic"), campaignSwitcher(list, currentId), profileLink()], current?.tagline, { isDM: true });
     banner(`🧪 <strong>Demo mode</strong> — sample data, and edits vanish on refresh.
       You're previewing as the DM so every control is visible.
       Connect your free database to make it real (README, step 2).`);
@@ -316,10 +305,9 @@ export async function boot(pageFile, pageTitle, opts = {}) {
     return { mode, me, campaign: current, campaigns: list, members: all, nameOf: nameResolver(all, me) };
   }
 
-  // Signed out → the PUBLIC nav (Home · Pricing · Enter) above the gate, so a
-  // visitor isn't shown fourteen app tabs they can't open yet.
+  // Signed out → just the wordmark above the gate; no tabs to open yet.
   const session = await auth.session();
-  if (!session) { renderHeader(pageFile, [], null, PUBLIC_NAV, "./index.html"); renderGate(main); return null; }
+  if (!session) { renderHeader(pageFile, [], null, { nav: false }); renderGate(main); return null; }
 
   // which campaigns does this signed-in person belong to?
   let myCampaigns = [];
@@ -335,10 +323,9 @@ export async function boot(pageFile, pageTitle, opts = {}) {
     renderHeader(pageFile, [
       document.createTextNode(meL.display_name || session.email),
       pill(meL.role === "dm" ? "DM" : "player", meL.role === "dm" ? "gold" : "steel"),
-      siteLink(),
       profileLink(),
       signOutBtn(),
-    ], CONFIG.TAGLINE);
+    ], CONFIG.TAGLINE, { isDM: meL.role === "dm" });
     const allL = await members.list();
     const ctxL = {
       mode, legacy: true,
@@ -350,7 +337,7 @@ export async function boot(pageFile, pageTitle, opts = {}) {
   }
 
   if (!myCampaigns.length) {
-    renderHeader(pageFile, [document.createTextNode(session.email), siteLink(), profileLink(), signOutBtn()]);
+    renderHeader(pageFile, [document.createTextNode(session.email), profileLink(), signOutBtn()], null, { nav: false });
     if (opts.allowNoCampaign) {
       setCampaign(null);
       const me = { email: session.email.toLowerCase(), name: "", role: "player", isDM: false };
@@ -372,10 +359,9 @@ export async function boot(pageFile, pageTitle, opts = {}) {
     campaignSwitcher(myCampaigns, currentId),
     document.createTextNode(me.display_name || session.email),
     pill(me.role === "dm" ? "DM" : "player", me.role === "dm" ? "gold" : "steel"),
-    siteLink(),
     profileLink(),
     signOutBtn(),
-  ], current?.tagline);
+  ], current?.tagline, { isDM: me.role === "dm" });
 
   const all = await members.list();
   const ctx = {
@@ -398,21 +384,18 @@ async function renderNoCampaigns(main, email) {
   try { canCreate = await campaigns.canCreate(); } catch { canCreate = false; }
 
   if (!canCreate) {
-    const free = CONFIG.TIERS?.FREE?.name || "Adventurer";
-    const dm = CONFIG.TIERS?.DM?.name || "DM";
     main.innerHTML = `
       <div class="card gate">
-        <h2>Welcome, ${esc(free)}</h2>
-        <p class="muted small">You're signed in as <strong>${esc(email)}</strong> but not part of any
-        campaign yet. Ask your DM for an invite link — open it and you'll be dropped straight
-        into their table.</p>
-        <p class="muted small">Want to run your own? Become a <strong>${esc(dm)}</strong> to create
-        campaigns and unlock the AI dungeon-prep tools.</p>
+        <h2>Welcome, adventurer</h2>
+        <p class="muted small">You're signed in as <strong>${esc(email)}</strong> but not at a table yet.
+        Ask your DM for an invite link — open it and you'll be dropped straight in. If they've
+        already added your email to the party, just refresh this page.</p>
         <div class="actions">
-          <a class="btn" href="./pricing.html">${esc(CONFIG.TIERS?.DM?.icon || "🔥")} See plans</a>
+          <button class="btn" id="nc-refresh">Refresh</button>
           <button class="btn-ghost" id="nc-out">Sign out</button>
         </div>
       </div>`;
+    document.getElementById("nc-refresh").onclick = () => location.reload();
     document.getElementById("nc-out").onclick = async () => { await auth.signOut(); location.reload(); };
     return;
   }
@@ -436,33 +419,6 @@ async function renderNoCampaigns(main, email) {
     if (c?.id) rememberCampaign(c.id);
     location.reload();
   });
-}
-
-/* ── bootPublic: chrome for PUBLIC pages (landing, pricing) ──
-   Unlike boot(), this never gates: it draws the public header/nav + footer,
-   connects the database, and reports whether someone is signed in so the
-   page can swap its calls-to-action ("Create a free account" vs "Open your
-   campaign"). Returns { mode, session, email } — session is null when signed
-   out (and a stand-in in demo mode, where the site is always "signed in"). */
-export async function bootPublic(pageFile, pageTitle) {
-  // A falsy pageTitle keeps the page's own <title> (the landing page ships a
-  // descriptive one for search/social).
-  if (pageTitle) document.title = `${pageTitle} · ${CONFIG.APP_NAME}`;
-  const link = (href, text) => {
-    const a = document.createElement("a");
-    a.href = href; a.className = "who-profile"; a.textContent = text;
-    return a;
-  };
-  // Draw the signed-out chrome FIRST, so the page still has a header and
-  // nav even if the database client fails to load (CDN blocked, offline).
-  renderHeader(pageFile, [link("./login.html", "Sign in")], null, PUBLIC_NAV, "./index.html");
-  renderFooter();
-  const mode = await initDb();
-  let session = null;
-  try { session = await auth.session(); } catch { session = null; }
-  const email = session?.email ? String(session.email).toLowerCase() : null;
-  if (session) renderHeader(pageFile, [link("./hub.html", "⚔ Open your campaign")], null, PUBLIC_NAV, "./index.html");
-  return { mode, session, email };
 }
 
 function nameResolver(all, me) {

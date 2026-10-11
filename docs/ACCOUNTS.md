@@ -47,17 +47,47 @@ in. The join flow already handles the "check your email to confirm" state, and
 keeping accounts email-verified is what makes campaign-mate profile sharing
 trustworthy (the email really belongs to the person).
 
-## 4. SMTP (important for reliable emails)
+## 4. SMTP — do this, or password resets stop after two emails
 
-**Authentication → Emails / SMTP Settings → configure a custom SMTP server.**
+Supabase's built-in mailer is **for development only**: it allows roughly
+**2–4 emails per hour for the whole project**, and every password reset and
+sign-up confirmation counts. Once it's spent you get
+`email rate limit exceeded` and nobody can reset a password until it cools
+down. The permanent fix is a real email provider — about ten minutes, free.
 
-Supabase's built-in email sender is **heavily rate-limited** (a few messages
-per hour) and is meant only for early testing. Password-reset and
-email-confirmation messages are exactly the emails users need to arrive
-promptly, so configure a real SMTP provider (e.g. Resend, Postmark, SendGrid,
-Amazon SES, Mailgun) with a verified sending domain. Without this, resets and
-confirmations will appear to "work" in the app but the emails will be delayed,
-throttled, or dropped.
+### The quick way: Resend (free, 3,000 emails/month)
+
+1. Sign up at **resend.com**.
+2. **Domains → Add domain** → `onyxdungeon.com`. Resend shows 3–4 DNS records
+   (TXT/MX). Add them wherever the domain's DNS lives (the registrar), then
+   press **Verify** (minutes to an hour to propagate).
+3. **API Keys → Create** → copy the key (`re_…`). Treat it like a password:
+   it goes in the Supabase form below and nowhere else.
+4. Supabase → **Project Settings → Authentication → SMTP Settings → Enable
+   custom SMTP**, and fill in:
+
+   | Field | Value |
+   |---|---|
+   | Sender email | `noreply@onyxdungeon.com` |
+   | Sender name | `Onyx Dungeon` |
+   | Host | `smtp.resend.com` |
+   | Port | `465` |
+   | Minimum interval per user | `10` |
+   | Username | `resend` (literally that word) |
+   | Password | the `re_…` key |
+
+   Save. The limit rises to 30/hour immediately (raise it further in
+   **Authentication → Rate Limits** if you ever need to).
+
+> Until the domain verifies, Resend will only send from `onboarding@resend.dev`
+> and only to your own address — fine for a test, not for the party.
+
+### No email at all? The DM can reset a password by hand
+
+Supabase → **Authentication → Users** → the person's row → **"…" → Reset
+password** (or *Send magic link*). The login gate tells people to ask their
+DM when the mail doesn't come, so this is a perfectly good fallback for a
+table of friends.
 
 You may also want to customise the **email templates** (Authentication →
 Emails) so the "Reset password" and "Confirm signup" messages match the Onyx

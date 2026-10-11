@@ -12,21 +12,13 @@ stores what people type.
 
 **⚔️ Live at: <https://onyxdungeon.com>** (GitHub Pages, custom domain via `CNAME`)
 
-## Accounts & tiers
+## Who gets in
 
-The site has a **public front door** (`index.html` — the landing page, no
-login) and a **sign-in door** (`login.html`). Anyone can create a **free
-account**:
-
-| Tier | Who | Gets |
-|---|---|---|
-| 🗡️ **Adventurer** (free) | everyone who signs up | build heroes, join tables by invite link, play on the battle map, roll with the table, read the hub / notes / codex |
-| 🔥 **Dungeon Lord** (subscription) | whoever runs the table | everything above **plus** creating & running campaigns (the DM role), invites, encounters, homebrew editors, Discord, and every AI dungeon-prep tool |
-
-Tier names and the display price live in `js/config.js` (`TIERS`, `PRICING`).
-The paid tier is just the buyer's email in the `campaign_creators` allow-list —
-Stripe Checkout + a webhook grant/revoke it; see `docs/BILLING.md`. Until
-Stripe is configured the pricing page shows "coming soon" and nothing breaks.
+This is a **private table**: the whole site sits behind a login. Players
+create an account with the email the DM invited (or open an invite link and
+land straight at the table). Only emails in the `campaign_creators` allow-list
+can *create* campaigns — that's what makes someone the DM. Maps and art are
+uploaded by hand; there are no AI generators and nothing to buy.
 
 ---
 
@@ -48,9 +40,7 @@ it opens the front door only as far as those rules allow.
 ## Folder tour
 
 ```
-index.html                     ← PUBLIC landing page (no login) · js/pages/landing.js
-pricing.html, login.html       ← public plans page · the sign-in / create-account door
-hub.html, quests.html, ...     ← the signed-in app: one thin file per page (hub = campaign Home)
+index.html, quests.html, ...   ← one thin file per page (index = the login gate, then Home)
 css/style.css                  ← the whole look; colors are tokens at the top
 css/characters.css             ← builder + character-sheet styles
 js/config.js                   ← ★ the only file you edit by hand (name + keys)
@@ -112,12 +102,11 @@ and edits vanish on refresh.
    the DM).
 3. Same again with `supabase/seed-campaign.sql` — it loads the
    *Shadows of Destus* player primer onto the Home page.
-4. In **Authentication → Sign In / Providers → Email**: for a private table you
-   can leave "Confirm email" **off** (the invite list is the real gate, and it
-   avoids Supabase's very low free email limits). Once signups are **public**
-   — and definitely **before charging for the Dungeon Lord tier** — turn it
-   **on** and set up custom SMTP, so an unverified address can't claim a seat.
-   See `docs/ACCOUNTS.md`.
+4. In **Authentication → Sign In / Providers → Email**: for a private table
+   leave "Confirm email" **off** (the invite list is the real gate). Then set
+   up **custom SMTP** (`docs/ACCOUNTS.md`, section 4) — Supabase's built-in
+   mailer allows only a couple of emails an hour, so password-reset links
+   stop arriving almost immediately without it.
 5. In **Project Settings → API**, copy the **Project URL** and the
    **anon public** key into `js/config.js`. Never copy the `service_role`
    key anywhere.
