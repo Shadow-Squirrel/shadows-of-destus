@@ -3,10 +3,9 @@
 // only a DM writes. A spell authored here can be dropped onto any
 // character sheet, where the existing per-character custom-spell
 // plumbing casts AND animates it (school → volumetric FX on the
-// Battle map). AI drafting goes through the `generate-homebrew` Edge
-// Function (kind: spell), sharing the AI *text* bill cap with monsters.
+// Battle map).
 import { boot, esc, md, guard, toast } from "../shell.js";
-import { homebrewSpells, characters, ai, getCampaign, isReal } from "../db.js";
+import { homebrewSpells, characters } from "../db.js";
 import { openModal, spellMetaLine, spellTags, ordinal } from "./characters/common.js";
 import { migrateCharacter } from "../dnd/model.js";
 
@@ -17,8 +16,8 @@ const SAVE_NAMES = { str: "Strength", dex: "Dexterity", con: "Constitution", int
 const AOE_TYPES = ["", "sphere", "cone", "line", "cube", "cylinder"];
 const cap = (s) => (s ? s[0].toUpperCase() + s.slice(1) : s);
 
-// Normalize an AI draft (flat aoe_type/aoe_size, mixed case) OR a stored data
-// blob into the canonical custom-spell shape the model + FX understand. School
+// Normalize a form submission (flat aoe_type/aoe_size, mixed case) OR a stored
+// data blob into the canonical custom-spell shape the model + FX understand. School
 // and damage type are lowercased so schoolFlourish()/pal() in effects.js match.
 function toCustomSpell(raw = {}) {
   const r = raw || {};
@@ -72,7 +71,6 @@ async function main() {
       </div>
       <p class="muted small" style="margin-top:-6px">Homebrew spells for this campaign. Add one to a character and it
         casts — and bursts to life on the Battle map — like any spell.${isDM ? "" : " Your DM curates this list."}</p>
-      ${isDM ? `<div id="ai-slot"></div>` : ""}
       <div id="form-slot"></div>
       <div class="grid" id="grid" style="grid-template-columns:repeat(auto-fill, minmax(300px, 1fr))"></div>`;
 
@@ -85,66 +83,6 @@ async function main() {
 
     const nb = root.querySelector("#new-sp");
     if (nb) nb.onclick = () => openForm();
-    if (isDM) renderAi();
-  }
-
-  /* ── ✨ Draft a spell with AI (DM only) ── */
-  async function renderAi() {
-    const slot = root.querySelector("#ai-slot");
-    if (!slot || !isReal()) return;
-
-    let usage = null;
-    try { usage = await ai.textUsage(); } catch { usage = null; }
-
-    if (!usage) {
-      slot.innerHTML = `
-        <div class="card ai-card">
-          <div class="row" style="justify-content:space-between; align-items:center">
-            <strong>✨ Draft a spell with AI</strong>
-            <span class="pill mystic">not set up</span>
-          </div>
-          <p class="muted small" style="margin:6px 0 0">AI drafting isn't set up yet. Deploy the
-            <code>generate-homebrew</code> function and set a provider key — see <code>docs/AI-HOMEBREW.md</code>.
-            You can still write spells by hand.</p>
-        </div>`;
-      return;
-    }
-
-    const left = usage.remaining ?? 0;
-    slot.innerHTML = `
-      <div class="card ai-card">
-        <div class="row" style="justify-content:space-between; align-items:center">
-          <strong>✨ Draft a spell with AI</strong>
-          <span class="pill ${left > 0 ? "moss" : "ember"}" title="Shared with monster generation · resets monthly">${left} of ${usage.cap ?? "?"} left this month</span>
-        </div>
-        <p class="muted small" style="margin:6px 0 8px">Describe it and the AI drafts a balanced 5e spell for you to review and edit. Failed drafts don't count against your quota.</p>
-        <textarea id="ai-prompt" style="min-height:56px" placeholder="e.g. a 3rd-level evocation that hurls a spiraling lance of frost, Dex save, cold damage, 60 ft line"></textarea>
-        <div class="actions">
-          <button class="btn" id="ai-go" ${left > 0 ? "" : "disabled"}>${left > 0 ? "✨ Draft spell" : "Monthly limit reached"}</button>
-          <span class="muted small" id="ai-msg"></span>
-        </div>
-      </div>`;
-
-    slot.querySelector("#ai-go").onclick = () => {
-      const prompt = slot.querySelector("#ai-prompt").value.trim();
-      if (!prompt) { toast("Describe the spell first"); return; }
-      const go = slot.querySelector("#ai-go");
-      go.disabled = true;
-      slot.querySelector("#ai-msg").textContent = "Consulting the loremasters… (a few seconds)";
-      guard(async () => {
-        try {
-          const draft = await ai.generateHomebrew({ campaignId: getCampaign(), kind: "spell", prompt });
-          if (!draft) throw new Error("No spell came back");
-          openForm(toCustomSpell(draft));
-          toast("Draft ready — review it, then Save to the spellbook");
-        } catch (e) {
-          if (e.code === "not-configured") { renderAi(); toast("AI drafting isn't set up yet — see docs/AI-HOMEBREW.md"); return; }
-          go.disabled = false;
-          slot.querySelector("#ai-msg").textContent = "";
-          toast("⚠ " + (e.message || "Drafting failed"));
-        }
-      });
-    };
   }
 
   /* ── a spell card ── */

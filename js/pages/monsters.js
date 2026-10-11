@@ -1,10 +1,9 @@
-// The Bestiary — custom monsters a DM builds by hand or with AI.
+// The Bestiary — custom monsters a DM builds by hand.
 // Stat blocks live in `homebrew_monsters` (per campaign); the party
-// can read them, only a DM writes. AI stat generation goes through
-// the `generate-monster` Edge Function (Claude, its own bill cap);
-// portrait art reuses the FLUX `generate-image` (kind: portrait).
+// can read them, only a DM writes. A monster may carry a portrait
+// (`art_path` in the private storage bucket) — shown via art.urls.
 import { boot, esc, guard, toast } from "../shell.js";
-import { homebrewMonsters, ai, getCampaign, isReal } from "../db.js";
+import { homebrewMonsters, art } from "../db.js";
 import { openModal } from "./characters/common.js";
 
 const SIZES = ["Tiny", "Small", "Medium", "Large", "Huge", "Gargantuan"];
@@ -20,14 +19,14 @@ async function main() {
   const root = document.getElementById("main");
   const isDM = ctx.me.isDM;
   let list = [];
-  let artUrls = {};
+  let urls = {};
 
   await render();
 
   async function render() {
     list = await homebrewMonsters.list();
-    try { artUrls = await ai.artUrls(list.map((m) => m.art_path).filter(Boolean)); }
-    catch { artUrls = {}; }
+    try { urls = await art.urls(list.map((m) => m.art_path).filter(Boolean)); }
+    catch { urls = {}; }
 
     root.innerHTML = `
       <div class="row" style="justify-content:space-between; margin-bottom:14px">
@@ -35,7 +34,6 @@ async function main() {
         ${isDM ? '<button class="btn" id="new-mon">+ Build a monster</button>' : ""}
       </div>
       ${isDM ? `<p class="muted small" style="margin-top:-6px">Custom monsters you make here can be dropped into any encounter on the Battle map.</p>` : ""}
-      ${isDM ? `<div id="ai-slot"></div>` : ""}
       <div id="form-slot"></div>
       <div class="grid" id="grid" style="grid-template-columns:repeat(auto-fill, minmax(320px, 1fr))"></div>`;
 
@@ -47,77 +45,17 @@ async function main() {
 
     const nb = root.querySelector("#new-mon");
     if (nb) nb.onclick = () => openForm();
-    if (isDM) renderAi();
-  }
-
-  /* ── ✨ Generate a monster with AI (DM only) ── */
-  async function renderAi() {
-    const slot = root.querySelector("#ai-slot");
-    if (!slot || !isReal()) return;
-
-    let usage = null;
-    try { usage = await ai.textUsage(); } catch { usage = null; }
-
-    if (!usage) {
-      slot.innerHTML = `
-        <div class="card ai-card">
-          <div class="row" style="justify-content:space-between; align-items:center">
-            <strong>✨ Generate a monster with AI</strong>
-            <span class="pill mystic">not set up</span>
-          </div>
-          <p class="muted small" style="margin:6px 0 0">AI monster generation isn't set up yet.
-            Deploy the <code>generate-monster</code> function and set <code>ANTHROPIC_API_KEY</code> —
-            see <code>docs/AI-MONSTERS.md</code>. You can still build monsters by hand.</p>
-        </div>`;
-      return;
-    }
-
-    const left = usage.remaining ?? 0;
-    slot.innerHTML = `
-      <div class="card ai-card">
-        <div class="row" style="justify-content:space-between; align-items:center">
-          <strong>✨ Generate a monster with AI</strong>
-          <span class="pill ${left > 0 ? "moss" : "ember"}" title="Resets at the start of each month">${left} of ${usage.cap ?? "?"} left this month</span>
-        </div>
-        <p class="muted small" style="margin:6px 0 8px">Describe it and Claude drafts a balanced 5e stat block for you to review and edit. Failed generations don't count against your quota.</p>
-        <textarea id="ai-prompt" style="min-height:56px" placeholder="e.g. a fire-breathing bog lizard, CR 4, ambush predator that spits burning resin"></textarea>
-        <div class="actions">
-          <button class="btn" id="ai-go" ${left > 0 ? "" : "disabled"}>${left > 0 ? "✨ Generate stat block" : "Monthly limit reached"}</button>
-          <span class="muted small" id="ai-msg"></span>
-        </div>
-      </div>`;
-
-    slot.querySelector("#ai-go").onclick = () => {
-      const prompt = slot.querySelector("#ai-prompt").value.trim();
-      if (!prompt) { toast("Describe the monster first"); return; }
-      const go = slot.querySelector("#ai-go");
-      go.disabled = true;
-      slot.querySelector("#ai-msg").textContent = "Consulting the loremasters… (a few seconds)";
-      guard(async () => {
-        try {
-          const monster = await ai.generateMonster({ campaignId: getCampaign(), prompt });
-          if (!monster) throw new Error("No stat block came back");
-          openForm(monster);                 // review / edit / save
-          toast("Draft ready — review it, then Save to your bestiary");
-        } catch (e) {
-          if (e.code === "not-configured") { renderAi(); toast("AI monsters aren't set up yet — see docs/AI-MONSTERS.md"); return; }
-          go.disabled = false;
-          slot.querySelector("#ai-msg").textContent = "";
-          toast("⚠ " + (e.message || "Generation failed"));
-        }
-      });
-    };
   }
 
   /* ── a monster card in the grid ── */
   function card(m) {
     const d = m.data || {};
-    const art = m.art_path ? artUrls[m.art_path] : null;
+    const src = m.art_path ? urls[m.art_path] : null;
     const el = document.createElement("div");
     el.className = "card map-card";
     el.innerHTML = `
-      ${art ? `<img src="${esc(art)}" alt="${esc(m.name)}" loading="lazy" style="border-radius:10px; aspect-ratio:4/3; object-fit:cover" />` : ""}
-      <div class="row" style="justify-content:space-between; margin-top:${art ? "10px" : "0"}">
+      ${src ? `<img src="${esc(src)}" alt="${esc(m.name)}" loading="lazy" style="border-radius:10px; aspect-ratio:4/3; object-fit:cover" />` : ""}
+      <div class="row" style="justify-content:space-between; margin-top:${src ? "10px" : "0"}">
         <strong style="font-size:17px">${esc(m.name)}</strong>
         <span class="pill ember">CR ${esc(m.cr || d.cr || "?")}</span>
       </div>
@@ -175,9 +113,9 @@ async function main() {
   }
 
   function viewModal(m) {
-    const art = m.art_path ? artUrls[m.art_path] : null;
+    const src = m.art_path ? urls[m.art_path] : null;
     openModal(m.name, `
-      ${art ? `<img src="${esc(art)}" alt="${esc(m.name)}" style="width:100%; border-radius:10px; margin-bottom:12px" />` : ""}
+      ${src ? `<img src="${esc(src)}" alt="${esc(m.name)}" style="width:100%; border-radius:10px; margin-bottom:12px" />` : ""}
       ${statBlockHtml(m)}`);
   }
 
@@ -253,15 +191,7 @@ async function main() {
           <div class="grow"><label class="field">Languages</label><input name="languages" value="${esc(s.languages || "")}" placeholder="Common" /></div>
         </div>
         <div id="sections"></div>
-        <div class="card" style="margin-top:12px; background:rgba(0,0,0,.15)">
-          <div class="row" style="justify-content:space-between; align-items:center">
-            <strong>🎨 Portrait</strong>
-            <span class="muted small" id="art-msg"></span>
-          </div>
-          <div id="art-preview" style="margin:8px 0"></div>
-          <input type="hidden" name="art_prompt" value="${esc(s.art_prompt || "")}" />
-          <button type="button" class="btn-ghost" id="gen-art" style="padding:4px 12px">✨ Generate art</button>
-        </div>
+        <div id="art-preview" style="margin:8px 0"></div>
         <div class="actions" style="margin-top:12px">
           <button class="btn" type="submit">${existing ? "Save changes" : "Save to bestiary"}</button>
           <button type="button" class="btn-ghost" data-cancel>Cancel</button>
@@ -276,32 +206,12 @@ async function main() {
     const secLegendary = sectionEditor("Legendary Actions", s.legendary);
     [secTraits, secActions, secReactions, secLegendary].forEach((e) => secWrap.appendChild(e));
 
-    // art state
-    let artPath = existing?.art_path || null;
-    const artPreview = card.querySelector("#art-preview");
-    const paintArt = (url) => { artPreview.innerHTML = url ? `<img src="${esc(url)}" alt="portrait" style="width:100%; max-width:280px; border-radius:10px" />` : ""; };
-    if (artPath && artUrls[artPath]) paintArt(artUrls[artPath]);
-
-    card.querySelector("#gen-art").onclick = () => {
-      if (!isReal()) { toast("Art needs the live database"); return; }
-      const f = new FormData(card.querySelector("#mon-form"));
-      const prompt = (f.get("art_prompt") || "").toString().trim()
-        || `${f.get("size")} ${f.get("type")} named ${f.get("name")}, fantasy creature portrait, dramatic lighting`;
-      const btn = card.querySelector("#gen-art");
-      btn.disabled = true;
-      card.querySelector("#art-msg").textContent = "Painting… (a few seconds)";
-      guard(async () => {
-        try {
-          const res = await ai.generate({ campaignId: getCampaign(), kind: "portrait", prompt });
-          artPath = res.path || null;
-          paintArt(res.url);
-          card.querySelector("#art-msg").textContent = "Looks good? Save to keep it.";
-        } catch (e) {
-          card.querySelector("#art-msg").textContent = "";
-          toast(e.code === "not-configured" ? "AI art isn't set up — see docs/AI-IMAGES.md" : "⚠ " + (e.message || "Art failed"));
-        } finally { btn.disabled = false; }
-      });
-    };
+    // existing portrait (kept as-is on save)
+    const artPath = existing?.art_path || null;
+    if (artPath && urls[artPath]) {
+      card.querySelector("#art-preview").innerHTML = `<label class="field">Portrait</label>
+        <img src="${esc(urls[artPath])}" alt="portrait" style="width:100%; max-width:280px; border-radius:10px" />`;
+    }
 
     card.querySelectorAll("[data-cancel]").forEach((b) => (b.onclick = () => render()));
     card.querySelector("#mon-form").onsubmit = (e) => {
@@ -320,7 +230,6 @@ async function main() {
         cr: str("cr"),
         traits: secTraits.get(), actions: secActions.get(),
         reactions: secReactions.get(), legendary: secLegendary.get(),
-        art_prompt: str("art_prompt"),
       };
       guard(async () => {
         await homebrewMonsters.save({ id: existing?.id, name: str("name") || "New monster", cr: str("cr"), data, art_path: artPath });

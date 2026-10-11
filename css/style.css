@@ -528,7 +528,6 @@ a.btn, a.btn-ghost, a.btn-danger { text-decoration: none; display: inline-block;
   box-shadow: var(--sh-2);
 }
 .portrait-tools { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.portrait-note { margin: 0; }
 @media (max-width: 480px) {
   .portrait-img { width: 96px; height: 96px; }
 }
