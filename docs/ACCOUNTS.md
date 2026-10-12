@@ -75,10 +75,17 @@ No new account, no DNS. Emails arrive from your Gmail address with the name
    ```
    It asks for the password (typed hidden, never saved), shows exactly what
    will change on the project, pushes the SMTP settings with
-   `npx supabase config push` (say **Y** to the auth/smtp changes; **N** to
-   anything it offers that isn't under `auth`), then sends a **real
-   password-reset email** to an address you give it. If that lands in your
-   inbox, you're done for good.
+   `npx supabase config push` (say **Y** to the `auth` section — that's the
+   email settings; **N** to every other section it offers), then sends a
+   **real password-reset email** to an address you give it. If that lands in
+   your inbox, you're done for good.
+
+   > **Got `402 … upgrade the project to a paid tier to enable vector
+   > buckets`?** You answered Y to the *storage* section. No harm done: the
+   > CLI pushes `auth` before `storage`, so the email settings are already
+   > live. Re-run the script, answer N to storage, and it carries on to the
+   > test email. (The repo's `config.toml` no longer declares that Pro-only
+   > feature, so current checkouts don't even ask.)
 
 The settings it pushes are the `[auth.email.smtp]` block in
 `supabase/config.toml` (host `smtp.gmail.com`, port `465`, user = your Gmail)

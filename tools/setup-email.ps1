@@ -34,6 +34,19 @@ if (-not (Test-Path (Join-Path $root "supabase\.temp\project-ref"))) {
   exit 1
 }
 
+# -- refuse to push storage features that need a paid plan --------
+# The CLI template turns on vector buckets by default; on the free tier
+# the storage push then fails with "402 ... upgrade ... vector buckets".
+$toml = Get-Content (Join-Path $root "supabase\config.toml") -Raw
+foreach ($feature in @("vector", "analytics", "image_transformation")) {
+  $section = [regex]::Match($toml, '(?ms)^\[storage\.' + $feature + '\]\s*$(.*?)(?=^\[|\z)')
+  if ($section.Success -and ($section.Groups[1].Value -match '(?m)^\s*enabled\s*=\s*true')) {
+    Write-Host "supabase\config.toml turns on [storage.$feature], which needs a paid Supabase plan." -ForegroundColor Red
+    Write-Host "Comment that block out (there's a note above it in the file) and re-run."
+    exit 1
+  }
+}
+
 # -- the secret, typed hidden, kept only in this process ----------
 $secure = Read-Host -AsSecureString "SMTP password (typing is hidden)"
 $bstr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure)
@@ -50,8 +63,6 @@ $plain = $null
 try {
   # -- 1/3 preview ------------------------------------------------
   Write-Host "1/3  What would change on the project (review it):" -ForegroundColor Cyan
-  Write-Host "     Say Y to the auth / smtp changes. If it offers anything that is NOT under" -ForegroundColor DarkGray
-  Write-Host "     'auth' (storage, db, api...), answer N - those aren't part of this." -ForegroundColor DarkGray
   Write-Host ""
   npx supabase config diff
   if ($LASTEXITCODE -ne 0) {
@@ -62,10 +73,18 @@ try {
   Write-Host ""
 
   # -- 2/3 push ---------------------------------------------------
-  Write-Host "2/3  Pushing (it asks before each change):" -ForegroundColor Cyan
+  Write-Host "2/3  Pushing. The CLI asks once per section, in this order:" -ForegroundColor Cyan
+  Write-Host "       api  ->  db.settings  ->  db.network_restrictions  ->  db.ssl_enforcement  ->  AUTH  ->  storage" -ForegroundColor DarkGray
+  Write-Host "     Answer Y ONLY to 'auth' (that's the email settings)." -ForegroundColor Yellow
+  Write-Host "     Answer N to every other section it offers - they are not part of this." -ForegroundColor Yellow
+  Write-Host ""
   npx supabase config push
   if ($LASTEXITCODE -ne 0) {
-    Write-Host "Push failed - fix the message above and re-run." -ForegroundColor Red
+    Write-Host ""
+    Write-Host "Push stopped on an error (see above)." -ForegroundColor Red
+    Write-Host "If it died on 'storage' or another non-auth section, the auth settings were" -ForegroundColor Yellow
+    Write-Host "already pushed (auth goes before storage). Just re-run this script, answer N" -ForegroundColor Yellow
+    Write-Host "to that section, and it will carry on to the test email." -ForegroundColor Yellow
     exit 1
   }
 }

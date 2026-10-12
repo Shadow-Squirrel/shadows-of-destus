@@ -132,25 +132,23 @@ enabled = true
 # [storage.image_transformation]
 # enabled = true
 
-# Store analytical data in S3 for running ETL jobs over Iceberg Catalog
-# This feature is only available on the hosted platform.
-[storage.analytics]
-enabled = false
-max_namespaces = 5
-max_tables = 10
-max_catalogs = 2
-
-# Analytics Buckets is available to Supabase Pro plan.
-# [storage.analytics.buckets.my-warehouse]
-
-# Store vector embeddings in S3 for large and durable datasets
-[storage.vector]
-enabled = true
-max_buckets = 10
-max_indexes = 5
-
-# Vector Buckets is available to Supabase Pro plan.
-# [storage.vector.buckets.documents-openai]
+# Analytics (Iceberg) buckets and vector buckets are Supabase PRO-plan
+# features. They stay commented out on purpose: `supabase config push` only
+# sends what this file declares, and the CLI template's default of
+# `[storage.vector] enabled = true` makes the free-tier project answer
+# "402: Please upgrade the project to a paid tier to enable vector buckets"
+# for the whole storage push. Nothing in this site uses either feature.
+#
+# [storage.analytics]
+# enabled = false
+# max_namespaces = 5
+# max_tables = 10
+# max_catalogs = 2
+#
+# [storage.vector]
+# enabled = false
+# max_buckets = 10
+# max_indexes = 5
 
 [auth]
 enabled = true
