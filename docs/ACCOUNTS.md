@@ -7,25 +7,31 @@ and the `profiles` table + `avatars` storage bucket created by
 already applied — but a few settings in the **Supabase dashboard** must be set
 by the project owner before reset/confirmation emails work in production.
 
-All of these live under **Authentication** in the Supabase dashboard.
+Sections 1, 2 and 4 are declared in `supabase/config.toml` and pushed to the
+hosted project by `tools/setup-email.ps1` (section 4). The dashboard pages
+under **Authentication** show the same values afterwards; section 3 is a
+dashboard toggle.
 
 ## 1. Site URL
 
-**Authentication → URL Configuration → Site URL:**
+`[auth] site_url` in `supabase/config.toml`:
 
 ```
 https://onyxdungeon.com
 ```
 
-This is the base URL Supabase uses when it builds links in its emails.
+This is the base URL Supabase uses when it builds links in its emails
+(dashboard: **Authentication → URL Configuration → Site URL**).
 
 ## 2. Redirect URLs (allow-list)
 
-**Authentication → URL Configuration → Redirect URLs** — add both:
+`[auth] additional_redirect_urls` in `supabase/config.toml` holds:
 
 ```
 https://onyxdungeon.com/reset.html
 https://onyxdungeon.com/join.html
+http://localhost:4173/reset.html     (run-local.bat)
+http://localhost:4173/join.html
 ```
 
 Supabase only redirects auth links to URLs on this allow-list. The app asks
@@ -34,9 +40,10 @@ for `…/reset.html` as the `redirectTo` for password resets
 A link whose target isn't allow-listed silently falls back to the Site URL,
 which breaks the reset flow — so both entries are required.
 
-> For local testing you can also add `http://localhost:8000/reset.html` and
-> `http://localhost:8000/join.html` (match whatever port `run-local.bat` /
-> `server.js` serve on).
+> Add new entries (another local port, a staging host) to that list in
+> `config.toml` and re-run the script. Entries typed into the dashboard
+> (**Authentication → URL Configuration → Redirect URLs**) are replaced by
+> the list in the file on the next push.
 
 ## 3. Confirm email
 
@@ -75,10 +82,19 @@ No new account, no DNS. Emails arrive from your Gmail address with the name
    ```
    It asks for the password (typed hidden, never saved), shows exactly what
    will change on the project, pushes the SMTP settings with
-   `npx supabase config push` (say **Y** to the auth/smtp changes; **N** to
-   anything it offers that isn't under `auth`), then sends a **real
-   password-reset email** to an address you give it. If that lands in your
-   inbox, you're done for good.
+   `npx supabase config push` (say **Y** to the `auth` section — that's the
+   email settings; **N** to every other section it offers), then sends a
+   **real password-reset email** to an address you give it. If that lands in
+   your inbox, you're done for good.
+
+   > **Got `402 … upgrade the project to a paid tier to enable vector
+   > buckets`?** You answered Y to the *storage* section. No harm done: the
+   > CLI pushes `auth` before `storage`, so the email settings are already
+   > live. Re-run the script, answer N to storage, and it carries on to the
+   > test email. (The repo's `config.toml` no longer declares that Pro-only
+   > feature. If storage is still offered, it's only the file-size limit or
+   > the S3-protocol toggle, and N is the right answer.) Type the letter N:
+   > pressing Enter picks the highlighted Yes.
 
 The settings it pushes are the `[auth.email.smtp]` block in
 `supabase/config.toml` (host `smtp.gmail.com`, port `465`, user = your Gmail)
