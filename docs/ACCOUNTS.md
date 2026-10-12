@@ -58,32 +58,48 @@ sign-up confirmation counts. Once it's spent you get
 `email rate limit exceeded` and nobody can reset a password until it cools
 down. The permanent fix is a real email provider — about ten minutes, free.
 
-### The quick way: Resend (free, 3,000 emails/month)
+### The two-minute way: your Gmail + one script (recommended for a table)
 
-1. Sign up at **resend.com**.
-2. **Domains → Add domain** → `onyxdungeon.com`. Resend shows 3–4 DNS records
-   (TXT/MX). Add them wherever the domain's DNS lives (the registrar), then
-   press **Verify** (minutes to an hour to propagate).
-3. **API Keys → Create** → copy the key (`re_…`). Treat it like a password:
-   it goes in the Supabase form below and nowhere else.
-4. Supabase → **Project Settings → Authentication → SMTP Settings → Enable
-   custom SMTP**, and fill in:
+No new account, no DNS. Emails arrive from your Gmail address with the name
+"Onyx Dungeon". Google allows ~500 a day — more than a table will ever send.
 
-   | Field | Value |
-   |---|---|
-   | Sender email | `noreply@onyxdungeon.com` |
-   | Sender name | `Onyx Dungeon` |
-   | Host | `smtp.resend.com` |
-   | Port | `465` |
-   | Minimum interval per user | `10` |
-   | Username | `resend` (literally that word) |
-   | Password | the `re_…` key |
+1. **Get an App Password from Google** (the only part only you can do):
+   [myaccount.google.com/apppasswords](https://myaccount.google.com/apppasswords)
+   → name it `Onyx Dungeon` → **Create** → copy the 16-letter password it
+   shows (spaces don't matter). If that page says app passwords aren't
+   available, turn on **2-Step Verification** first (Security → 2-Step
+   Verification), then come back.
+2. **Run the script** from the project folder in PowerShell:
+   ```powershell
+   .\tools\setup-email.ps1
+   ```
+   It asks for the password (typed hidden, never saved), shows exactly what
+   will change on the project, pushes the SMTP settings with
+   `npx supabase config push` (say **Y** to the auth/smtp changes; **N** to
+   anything it offers that isn't under `auth`), then sends a **real
+   password-reset email** to an address you give it. If that lands in your
+   inbox, you're done for good.
 
-   Save. The limit rises to 30/hour immediately (raise it further in
-   **Authentication → Rate Limits** if you ever need to).
+The settings it pushes are the `[auth.email.smtp]` block in
+`supabase/config.toml` (host `smtp.gmail.com`, port `465`, user = your Gmail)
+plus the Site URL / redirect allow-list and a 30-emails-per-hour limit — so
+this also fixes reset links landing on the wrong address.
 
-> Until the domain verifies, Resend will only send from `onboarding@resend.dev`
-> and only to your own address — fine for a test, not for the party.
+### The "own domain" way: Resend (free, 3,000 emails/month)
+
+Only if you'd rather emails come from `noreply@onyxdungeon.com`:
+
+1. Sign up at **resend.com** → **Domains → Add domain** → `onyxdungeon.com` →
+   add the 3–4 DNS records it shows at your domain registrar → **Verify**.
+2. **API Keys → Create** → copy the `re_…` key.
+3. In `supabase/config.toml` under `[auth.email.smtp]` set
+   `host = "smtp.resend.com"`, `user = "resend"`,
+   `admin_email = "noreply@onyxdungeon.com"`, then run the same
+   `.\tools\setup-email.ps1` and paste the `re_…` key as the password.
+
+> Prefer clicking? Both can also be typed into Supabase → **Project Settings →
+> Authentication → SMTP Settings** by hand; the values are the ones in
+> `config.toml`.
 
 ### No email at all? Set a player's password by hand
 

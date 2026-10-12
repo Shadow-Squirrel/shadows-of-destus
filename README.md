@@ -103,10 +103,11 @@ and edits vanish on refresh.
 3. Same again with `supabase/seed-campaign.sql` — it loads the
    *Shadows of Destus* player primer onto the Home page.
 4. In **Authentication → Sign In / Providers → Email**: for a private table
-   leave "Confirm email" **off** (the invite list is the real gate). Then set
-   up **custom SMTP** (`docs/ACCOUNTS.md`, section 4) — Supabase's built-in
-   mailer allows only a couple of emails an hour, so password-reset links
-   stop arriving almost immediately without it.
+   leave "Confirm email" **off** (the invite list is the real gate). Then turn
+   on **real email**: get a Gmail App Password and run
+   `.\tools\setup-email.ps1` (`docs/ACCOUNTS.md`, section 4) — Supabase's
+   built-in mailer allows only a couple of emails an hour, so password-reset
+   links stop arriving almost immediately without it.
 5. In **Project Settings → API**, copy the **Project URL** and the
    **anon public** key into `js/config.js`. Never copy the `service_role`
    key anywhere.
