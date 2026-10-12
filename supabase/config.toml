@@ -154,10 +154,10 @@ enabled = true
 enabled = true
 # The base URL of your website. Used as an allow-list for redirects and for constructing URLs used
 # in emails.
-# ⚠ This file only configures LOCAL `supabase start`. The hosted project's
-# values live in the dashboard (Authentication → URL Configuration) and must
-# match: Site URL https://onyxdungeon.com, redirects …/reset.html + …/join.html.
-# If they don't, reset/invite links silently fall back to Site URL.
+# These are pushed to the HOSTED project by tools/setup-email.ps1 (`supabase
+# config push`), which replaces the dashboard's Site URL and redirect list
+# with what's declared here. Edit them here, not in the dashboard. A reset or
+# invite link whose target isn't on the list silently falls back to Site URL.
 site_url = "https://onyxdungeon.com"
 # The public URL that Auth serves on. Defaults to the API external URL with `/auth/v1` appended.
 # external_url = ""
