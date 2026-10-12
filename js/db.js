@@ -1083,12 +1083,13 @@ export const npcs = {
     sb
       ? q(scope(sb.from("campaign_npcs").select("*")).order("created_at", { ascending: false }))
       : (DEMO.npcs || []).filter(inCampaign),
-  // row: {id?, name, data, art_path?, codex_entry_id?}
+  // row: {id?, name, data, art_path?, codex_entry_id?} — art_path and
+  // codex_entry_id are only written when the caller passes them, so a plain
+  // edit ({id, name, data}) never wipes a stored portrait or the Codex link.
   save: async (row) => {
-    const fields = {
-      name: row.name || "New NPC", data: row.data || {},
-      art_path: row.art_path ?? null, codex_entry_id: row.codex_entry_id ?? null,
-    };
+    const fields = { name: row.name || "New NPC", data: row.data || {} };
+    if ("art_path" in row) fields.art_path = row.art_path ?? null;
+    if ("codex_entry_id" in row) fields.codex_entry_id = row.codex_entry_id ?? null;
     if (!sb) {
       DEMO.npcs ||= [];
       if (row.id) return Object.assign(DEMO.npcs.find((m) => m.id === row.id) || {}, fields);

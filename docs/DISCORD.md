@@ -48,7 +48,7 @@ npx supabase functions deploy discord-post
   announcements. It reads the webhook with the DM's own auth (RLS returns it
   only to the campaign's DM) and posts a formatted embed.
 
-**No API keys** — Discord webhooks need none. Nothing here touches the AI budgets.
+**No API keys** — Discord webhooks need none.
 
 ## Notes & safety
 

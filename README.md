@@ -160,4 +160,6 @@ and edits vanish on refresh.
   keeps it alive; if it pauses, one click in the dashboard wakes it.
 - Supabase's built-in email is limited to a few messages/hour — that's why
   email confirmation is off and invites don't send emails.
-- Forgot password? The DM can set a new one in Supabase → Authentication → Users.
+- Forgot password? With SMTP set up, the reset email just works. Without it,
+  the DM can set a temporary password directly — one SQL line, see
+  `docs/ACCOUNTS.md` section 4.

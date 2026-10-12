@@ -3,8 +3,8 @@
 --  plain PostgreSQL cluster (auth/storage/roles/realtime that the
 --  hosted platform provides but a bare Postgres does not). This is
 --  TEST SCAFFOLDING only — never apply it to a real database.
---  Load it BEFORE supabase/schema.sql. Used by
---  tools/run-ai-caps-tests.sh (and usable for tools/test-isolation.sql).
+--  Load it BEFORE supabase/schema.sql. Used by tools/run-accounts-tests.sh
+--  and tools/run-profiles-tests.sh (and usable for tools/test-isolation.sql).
 -- ═══════════════════════════════════════════════════════════════
 
 -- the three data-API roles Supabase provides
